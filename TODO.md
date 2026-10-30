@@ -32,7 +32,8 @@ These settle the plan's open questions so parallel agents stay consistent.
 
 ## 1. Phase A — Scaffolding & config contract
 
-### [ ] LM-1 · Project skeleton
+### [x] LM-1 · Project skeleton
+> Done: `pip install -e .[dev]` succeeds and `import lithomaker` works (`__version__` = 0.1.0); `convert`/`build_mesh`/`build_heightmap` are lazily re-exported (PEP 562) and resolve once `core.py` lands in Phase B.
 **Files:** `pyproject.toml`, `README.md`, `lithomaker/__init__.py`, `tests/__init__.py`, `.gitignore`, `examples/`
 Set up a modern `pyproject.toml` (PEP 621, `build-backend = "setuptools.build_meta"`):
 - `name = "lithomaker"`, `version = "0.1.0"`, `requires-python = ">=3.9"`
@@ -44,7 +45,8 @@ Set up a modern `pyproject.toml` (PEP 621, `build-backend = "setuptools.build_me
 
 **Depends on:** —
 
-### [ ] LM-2 · `config.py` — parameter dataclasses
+### [x] LM-2 · `config.py` — parameter dataclasses
+> Done: `LevelsConfig`/`LithoConfig` with full `__post_init__` validation, derived `z_min`/`z_max`/`total_height`, `resolved_size` (D2, returns a `Footprint(x, y, aspect_warning)` named tuple), `grid_shape` (D3, 4M-vertex guard with an actionable `--dot-size` suggestion), `resolved_output` (D5). 82 tests in `tests/test_config.py` pass (94 in the suite at that point).
 **Files:** `lithomaker/config.py`, `tests/test_config.py`
 Single source of truth for every parameter (CLI and GUI both build one of these).
 - `LevelsConfig(black=0.0, white=1.0, gamma=1.0, auto=False)` with `__post_init__` validation:
@@ -66,7 +68,8 @@ Single source of truth for every parameter (CLI and GUI both build one of these)
 
 **Depends on:** LM-1
 
-### [ ] LM-3 · Example fixture image
+### [x] LM-3 · Example fixture image
+> Done: `tools/make_sample.py` regenerates a deterministic 256x256 `examples/sample.png` byte-identically (verified by sha256); `.gitignore` now ignores `examples/*.stl` instead of the whole directory, so the sample is versioned as plan §9 expects; `tests/conftest.py` provides in-memory 2x2/1xN/16x16 and solid fixtures (covered by `tests/test_fixtures.py`).
 **Files:** `examples/sample.png`, `tools/make_sample.py`
 Scripted 256×256 PNG generation (Pillow, no binary committed by hand) containing a vertical
 grayscale ramp **plus** a radial gradient so levels/gamma changes are visually obvious.
@@ -80,7 +83,8 @@ fixtures that build tiny in-memory images (2×2, 1×N, 16×16) — no large bina
 
 ## 2. Phase B — Core pipeline (CLI-only milestone 1)
 
-### [ ] LM-10 · `image_io.py` — load & validate
+### [x] LM-10 · `image_io.py` — load & validate
+> Done: `load_image` returns `float32` RGB in `[0,1]`; extension allowlist plus a real decode; EXIF transpose, ICC→sRGB best effort, `with Image.open` + `image.load()` so handles are released; `ImageLoadError(ValueError)` with verbatim-safe messages. 27 tests cover every failure mode, every stock mode (L/LA/P/RGBA/CMYK/16-bit), EXIF rotation and the sample PNG (67 in `tests/test_image_io.py` overall).
 **Files:** `lithomaker/image_io.py`, `tests/test_image_io.py`
 - `load_image(path) -> np.ndarray` returning `float32` RGB in `[0, 1]`, shape `(H, W, 3)`.
 - Accept PNG/JPG/JPEG/BMP/TIFF/TIF/WEBP (extension allowlist **and** a real decode attempt).
@@ -94,7 +98,8 @@ fixtures that build tiny in-memory images (2×2, 1×N, 16×16) — no large bina
 
 **Depends on:** LM-1
 
-### [ ] LM-11 · `image_io.py` — luminance + levels + histogram
+### [x] LM-11 · `image_io.py` — luminance + levels + histogram
+> Done: Rec. 709 `to_luminance` (accepts RGB, (H,W,1) or 2D), vectorized `apply_levels` (remap → clamp → gamma), percentile `auto_levels` with flat-image and empty-input guards, 256-bin `histogram`. Tests cover Rec. 709 weights, identity no-op, clamping, gamma direction, low-contrast stretch, stray-extreme clipping and histogram edge bins.
 **Files:** `lithomaker/image_io.py`, `tests/test_image_io.py`
 - `to_luminance(rgb) -> np.ndarray` — Rec. 709 (`0.2126R + 0.7152G + 0.0722B`), `float32 [0,1]`.
 - `apply_levels(lum, levels) -> np.ndarray` — `((lum - black) / (white - black))`, clamp to `[0,1]`,
@@ -107,7 +112,8 @@ clamping and gamma direction are tested, auto levels on a low-contrast image exp
 
 **Depends on:** LM-2, LM-10
 
-### [ ] LM-12 · `image_io.py` — resample to mesh grid
+### [x] LM-12 · `image_io.py` — resample to mesh grid
+> Done: Pillow `F`-mode Lanczos `resample`, output shape equals `grid_shape` exactly, transposed so **axis 0 is X** to match the mesh contract. Lanczos ringing is clamped back to `[0,1]` so heights can never leave `[z_min, z_max]`. Tests cover exact shape for up/down/non-integer scales, the axis convention, constant images, the 64→3 checkerboard aliasing case, and invalid input.
 **Files:** `lithomaker/image_io.py`, `tests/test_image_io.py`
 `resample(lum, grid_shape) -> np.ndarray` using Pillow `Image.resize` in `F`/float mode
 (no `scipy` dependency), Lanczos by default. Must be **area-preserving-ish and strictly
@@ -118,7 +124,8 @@ to a mid-gray, not to extreme values).
 
 **Depends on:** LM-11
 
-### [ ] LM-13 · `core.py` — heightmap generation
+### [x] LM-13 · `core.py` — heightmap generation
+> Done: `build_heightmap(image, config) -> Heightmap` (path or in-memory RGB array) runs load → luminance → levels/auto → resample and carries `grid_shape`, `resolved_size`, `z_min`/`z_max` and `warnings`. `Heightmap.values` stores **normalized brightness** (1.0 = brightest) because `LithoConfig.height_to_z` owns D1's inversion, keeping one convention package-wide; white image → `base+z_min`, black → `base+z_max`, both tested. D2 aspect and D7 "auto ignores manual levels" warnings travel on the result. 26 tests in `tests/test_core.py`.
 **Files:** `lithomaker/core.py`, `tests/test_core.py`
 `build_heightmap(image, config) -> Heightmap` where `Heightmap` is a small dataclass
 (`values: np.ndarray[float32]` in `[0,1]`, `grid_shape`, `resolved_size`, `z_min`, `z_max`,
@@ -133,7 +140,8 @@ monotonicity is tested; warnings from D2 propagate onto the result.
 
 **Depends on:** LM-12
 
-### [ ] LM-14 · `mesh.py` — grid mesh data structure
+### [x] LM-14 · `mesh.py` — grid mesh data structure
+> Done: `@dataclass Mesh` (float64 `(N,3)` / int64 `(M,3)`, contiguous, shape-validated) with `vertex_count`, `triangle_count`, `bounds()`, `is_closed()` (undirected edge count == 2) and signed `volume()`. No I/O in the file's data section; `tests/test_mesh.py` covers coercion, invalid shapes, empty meshes, closedness and volume sign (48 tests in the file overall).
 **Files:** `lithomaker/mesh.py`, `tests/test_mesh.py`
 `@dataclass Mesh: vertices: np.ndarray (N,3) float64 or float32, triangles: np.ndarray (M,3) int64`.
 Helpers: `vertex_count`, `triangle_count`, `bounds() -> ((x0,y0,z0),(x1,y1,z1))`,
@@ -143,7 +151,8 @@ No I/O in this file; keep it pure data + geometry.
 
 **Depends on:** LM-1
 
-### [ ] LM-15 · `mesh.py` — mesh generation
+### [x] LM-15 · `mesh.py` — mesh generation
+> Done: `build_grid_mesh(z_grid, size_x, size_y)` builds top surface + 4 skirts + bottom from a grid where axis 0 is X; fully vectorized, degenerate faces dropped per D9, footprint anchored at `(0,0,0)`. Tests assert exact triangle counts (60 for 4×4, 12 for 2×2, 36 when zero-height walls drop), `is_closed()`, positive volume equal to `size_x·size_y·mean_z`, bounds, winding per surface, and a 300×300 build under 5 s.
 **Files:** `lithomaker/mesh.py`, `tests/test_mesh.py`
 Build the `nx × ny` grid per plan §4 step 6:
 - **Top surface:** heightmap-displaced grid, `2 * (nx-1) * (ny-1)` triangles, consistent CCW winding
@@ -159,7 +168,8 @@ triangle count after degenerate removal.
 
 **Depends on:** LM-13, LM-14
 
-### [ ] LM-16 · `mesh.py` — binary + ASCII STL export
+### [x] LM-16 · `mesh.py` — binary + ASCII STL export
+> Done: `write_stl(mesh, path, binary=True)`, atomic temp-file + `os.replace`, 80-byte header that never starts with `solid`, normals from winding (zero for degenerate), ASCII writer, `read_stl` for binary round-trip with explicit too-small/truncated errors. Tests include a byte-identical hand-built single-triangle reference, 50-byte record layout, unit normals, round-trip bounds, parent-dir creation, overwrite, temp cleanup on failure, and an ASCII parse-back.
 **Files:** `lithomaker/mesh.py`, `tests/test_mesh.py`
 - Binary writer per STL spec: 80-byte header (must **not** begin with `solid`), `uint32` triangle
   count, 50 bytes/triangle (float32 normal + 3 × float32 vertices + `uint16` attr, zeroed).
@@ -173,7 +183,8 @@ from a known 1-triangle mesh is byte-identical to a hand-built reference; ASCII 
 
 **Depends on:** LM-14
 
-### [ ] LM-17 · `core.py` — `convert()` orchestration + result object
+### [x] LM-17 · `core.py` — `convert()` orchestration + result object
+> Done: `convert(image_path, out_path=None, config=None, *, overwrite=False, progress=None)` is the single code path both frontends must call; positional paths override `config.input`/`config.output` via `dataclasses.replace`, output defaults to `<stem>.stl` per D5, parent dirs are created, existing files raise `FileExistsError` unless `overwrite=True`, and progress is reported as monotonic `(message, fraction)` events ending in `"done"`. `ConversionResult` carries output path, vertex/triangle counts, file size, Z range, total height, resolved size, grid shape and warnings. `read_stl` now welds shared vertices so the round-trip proves `is_closed()` and volume, per this task's Done-when.
 **Files:** `lithomaker/core.py`, `tests/test_core.py`
 `convert(image_path, out_path=None, config=...) -> ConversionResult` implementing **D12**.
 `ConversionResult`: `output_path`, `vertex_count`, `triangle_count`, `file_size`,
@@ -188,7 +199,8 @@ closed & positive-volume, and asserts result stats match the mesh.
 
 **Depends on:** LM-15, LM-16
 
-### [ ] LM-18 · Mesh size guard & clear failures
+### [x] LM-18 · Mesh size guard & clear failures
+> Done: implemented in `LithoConfig.grid_shape()` (`lithomaker/config.py:313`) before any allocation, naming `nx`, `ny`, the total, the limit and a `--dot-size` suggestion from `_min_dot_size`; asserted in `tests/test_config.py` (message contents plus a "suggested dot size actually fits" check).
 **Files:** `lithomaker/config.py`, `tests/test_config.py`
 Implement **D3** fully: compute `nx * ny` in `grid_shape()` *before* allocating anything,
 raise `ValueError` naming the offending numbers and the minimum `dot_size` that would fit.

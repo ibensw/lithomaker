@@ -6,9 +6,10 @@ A lithophane is a thin panel whose *thickness* encodes an image: thin areas tran
 light and look bright, thick areas block it and look dark. Lithomaker turns a picture
 into exactly that heightmap and exports a watertight, flat-bottomed STL in millimetres.
 
-> **Status: Phase A complete (scaffolding + parameter contract).**
-> The CLI and GUI described below are specified but not yet implemented — see
-> [`plan.md`](plan.md) for the design and [`TODO.md`](TODO.md) for progress.
+> **Status: Phase B complete (image I/O, heightmap, mesh and STL core).**
+> `lithomaker.core.convert()` is the single entry point; the CLI (Phase C) and GUI
+> (Phase D) are not yet written — see [`plan.md`](plan.md) for the design and
+> [`TODO.md`](TODO.md) for progress.
 
 ## Install (development)
 

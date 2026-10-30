@@ -29,5 +29,5 @@ htmlcov/
 .idea/
 .DS_Store
 
-# Samples
-examples/
+# Samples: keep the generated sample image (plan §9), ignore conversion output
+examples/*.stl

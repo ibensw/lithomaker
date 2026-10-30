@@ -7,8 +7,8 @@ Public API (see TODO.md, decision D12)::
     result = convert("photo.png", "out.stl", LithoConfig(input="photo.png"))
 
 ``convert``, ``build_heightmap`` and ``build_mesh`` are resolved lazily (PEP 562) so
-that ``import lithomaker`` stays cheap and does not pull in NumPy/Pillow. This also
-lets the package import cleanly while the processing core is still being written.
+that ``import lithomaker`` stays cheap and does not pull in NumPy/Pillow until the
+processing core is actually used.
 """
 
 from __future__ import annotations
