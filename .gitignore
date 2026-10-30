@@ -31,3 +31,4 @@ htmlcov/
 
 # Samples: keep the generated sample image (plan §9), ignore conversion output
 examples/*.stl
+examples/*.png

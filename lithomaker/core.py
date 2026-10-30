@@ -185,9 +185,7 @@ def convert(
     destination = settings.resolved_output
 
     if destination.exists() and not overwrite:
-        raise FileExistsError(
-            f"refusing to overwrite existing file: {destination} (pass overwrite=True or --force)"
-        )
+        raise FileExistsError(f"refusing to overwrite existing file: {destination}")
 
     _report(progress, "loading image", 0.05)
     heightmap = build_heightmap(settings.input, settings)

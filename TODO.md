@@ -215,7 +215,8 @@ suggested `dot_size`.
 
 ## 3. Phase C — CLI (milestone 2)
 
-### [ ] LM-20 · `cli.py` — Click command `convert`
+### [x] LM-20 · `cli.py` — Click command `convert`
+> Done: `lithomaker convert [OPTIONS] [INPUT_IMAGE] [OUTPUT.STL]` with the full plan §6 option set plus D5–D8: positional arguments with `-i/-o` aliases (both spellings at once is a usage error), `--min-layers` (D6), `--levels auto` **and** `--auto-levels/--no-auto-levels` (D7, contradictory spellings rejected), `--ascii/--binary` **and** `--format {binary,ascii}` (D8). Everything is delegated to `LithoConfig` + `core.convert()`; `ConfigError` → `UsageError` (exit 2), I/O failures → `ClickException` (exit 1). stdout is the written path then the stats table (`--no-stats` leaves the path alone); warnings and `-v` progress go to stderr. 46 tests in `tests/test_cli.py` cover the happy path, aliases, every validation failure, `--force`, conflicts and the entry point.
 **Files:** `lithomaker/cli.py`, `tests/test_cli.py`
 Implement plan §6 exactly, with the corrections in **D5–D8**:
 ```
@@ -234,14 +235,16 @@ and positional/flag conflict per D5.
 
 **Depends on:** LM-17, LM-18
 
-### [ ] LM-21 · `cli.py` — `--version`, `--help`, error hygiene
+### [x] LM-21 · `cli.py` — `--version`, `--help`, error hygiene
+> Done: `--version` reads `lithomaker.__version__`; group and `convert` help are tested for readable option coverage (`-h` alias included); `info` reports lithomaker/python/pillow/numpy/click via `importlib.metadata`. Every failure is a one-line `Error: …`; a raw traceback only appears with `-v`, which also re-raises unexpected exceptions (both paths tested). `main()` provides the `lithomaker` console script declared in `pyproject.toml`.
 **Files:** `lithomaker/cli.py`, `tests/test_cli.py`
 `lithomaker --version` from `lithomaker.__version__`; ensure `--help` at group *and* subcommand
 level is readable; add an `info` subcommand exposing library versions (`pillow`, `numpy`,
 `python`) for bug reports. Failures must never print a raw traceback unless `-v`.
 **Depends on:** LM-20
 
-### [ ] LM-22 · CLI docs & runnable examples
+### [x] LM-22 · CLI docs & runnable examples
+> Done: `README.md` now carries the plan §6 parameter table plus the D5–D8 additions, the stdout/stderr contract, the mm-units note (D4) and a FAQ (inverted model, oversized STL/`mesh too large`, slicer orientation, faceting, aspect warning). `docs/cli.md` has the verbatim `--help` capture for the group and `convert`, argument/exit-code tables, three worked examples (40 mm proof print, 150 mm portrait, CI one-liner) and a troubleshooting table; the example numbers were verified against real runs (68×68 grid / 18,492 triangles / 0.9 MB and 376×376 / 565,500 / 28 MB).
 **Files:** `README.md`, `docs/cli.md`
 - `README.md`: what a lithophane is, install, the plan §6 example, a parameters table identical to
   §6 (+ the D5–D8 additions), a note that STL is unitless-but-mm (**D4**), and an FAQ
