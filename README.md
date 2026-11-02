@@ -6,24 +6,66 @@ A lithophane is a thin panel whose *thickness* encodes an image: thin areas tran
 light and look bright, thick areas block it and look dark. Lithomaker turns a picture
 into exactly that heightmap and exports a watertight, flat-bottomed STL in millimetres.
 
-> **Status: Phase D complete (config, image I/O, core pipeline, mesh/STL, CLI and GUI).**
-> Packaging, CI and release polish (Phase E) remain — see [`plan.md`](plan.md) for the
-> design and [`TODO.md`](TODO.md) for progress. Full CLI reference: [`docs/cli.md`](docs/cli.md).
+![Lithomaker GUI](docs/screenshot.png)
 
-## Install (development)
+> [!NOTE]
+> **This project is vibe coded.** It was built iteratively in conversation with an AI
+> coding assistant, and it is **not published on PyPI** — clone the repository and run
+> it from source.
+
+> **Status:** working prototype. Image I/O, the heightmap/mesh core, the CLI and the GUI
+> are implemented and covered by the test suite. See [`plan.md`](plan.md) for the design,
+> [`TODO.md`](TODO.md) for progress and [`docs/cli.md`](docs/cli.md) for the full CLI
+> reference.
+
+## Run it from source
+
+Clone the repository and install the runtime dependencies:
 
 ```bash
+git clone https://github.com/wibens/lithomaker.git
+cd lithomaker
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-Requires Python 3.9+. Runtime dependencies: Pillow, NumPy, Click. The GUI uses
-`tkinter` from the standard library (on Debian/Ubuntu: `apt install python3-tk`).
+Requires Python 3.9+. `tkinter` ships with CPython; on Debian/Ubuntu install it with
+`sudo apt install python3-tk`.
+
+### Start the GUI
+
+```bash
+python -m lithomaker.gui
+```
+
+### Run the CLI
+
+```bash
+python -m lithomaker.cli convert examples/sample.png lithophane.stl --size-x 100
+```
+
+If you also want the `lithomaker` / `lithomaker-gui` commands on your `PATH`, install the
+checkout in editable mode (still local — nothing is uploaded anywhere):
+
+```bash
+pip install -e .
+lithomaker convert examples/sample.png out.stl
+lithomaker gui
+```
+
+### Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
 
 ## Usage
 
 ```bash
-lithomaker convert photo.png lithophane.stl \
+python -m lithomaker.cli convert photo.png lithophane.stl \
   --black 0.05 --white 0.95 --gamma 1.2 \
   --max-layers 20 --thickness 0.2 --size-x 100 \
   --dot-size 0.4 --base-thickness 1.2
@@ -73,9 +115,9 @@ Two behaviours are worth calling out:
 ## GUI
 
 ```bash
-lithomaker gui              # console script
-python -m lithomaker.gui    # module entry point
-lithomaker-gui              # gui-script entry point
+python -m lithomaker.gui    # works straight from the clone
+lithomaker gui              # after: pip install -e .
+lithomaker-gui              # after: pip install -e .
 ```
 
 The window is a thin wrapper over the same `core.convert()` the CLI uses, so every
@@ -145,13 +187,15 @@ Both `--size-x` and `--size-y` were given and do not match the image aspect. Dro
 ## Repository layout
 
 ```
-lithomaker/       package: config, image_io, core, mesh, cli, gui
-tests/            pytest suite; test images are generated in-memory
-tools/            developer scripts (make_sample.py regenerates examples/sample.png)
-examples/         sample.png — deterministic test pattern
-docs/cli.md       full CLI reference
-plan.md           design document
-TODO.md           task breakdown, decisions and dependencies
+lithomaker/          package: config, image_io, core, mesh, cli, gui
+tests/               pytest suite; test images are generated in-memory
+tools/               developer scripts (make_sample.py regenerates examples/sample.png)
+examples/            sample.png — deterministic test pattern
+docs/cli.md          full CLI reference
+docs/screenshot.png  GUI screenshot used above
+requirements.txt     runtime dependencies (Pillow, NumPy, Click)
+plan.md              design document
+TODO.md              task breakdown, decisions and dependencies
 ```
 
 ## Units

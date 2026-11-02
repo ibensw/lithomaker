@@ -1,0 +1,8 @@
+# Runtime dependencies for Lithomaker.
+# Python 3.9+ is required.
+#
+# tkinter is part of the Python standard library (it is not installable from PyPI);
+# on Debian/Ubuntu install it with: sudo apt install python3-tk
+Pillow>=9
+numpy>=1.21
+click>=8

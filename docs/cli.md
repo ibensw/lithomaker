@@ -4,6 +4,10 @@
 every GUI parameter has a CLI equivalent (plan §7), and both call
 `lithomaker.core.convert()`.
 
+The examples below use the `lithomaker` command, which is available after
+`pip install -e .`. Without an editable install, use `python -m lithomaker.cli` instead
+of `lithomaker` — the arguments are identical.
+
 ## Synopsis
 
 ```
