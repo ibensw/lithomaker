@@ -80,16 +80,21 @@ lithomaker-gui              # gui-script entry point
 
 The window is a thin wrapper over the same `core.convert()` the CLI uses, so every
 processing parameter has a widget (the mapping is machine-checked by the tests). The left
-panel shows the grayscale source, a 2D heightmap preview and the luminance histogram
-with the black/white points marked; the right panel holds the
-parameters grouped as Image / Levels / Geometry. The heightmap preview estimates how the
-part looks backlit: it uses total material thickness — base plate plus lithophane layer —
-with Beer–Lambert attenuation (μ = 0.35/mm), so a thicker base visibly dims the image.
-White means thick by default; the "Invert preview" toggle shows transmitted light instead
-(white = bright). Both are display-only and never change the STL. "Generate STL" runs the
-conversion on a
-worker thread, so progress, the status bar and the Result strip stay live and the window
-never freezes; failures appear as message boxes, never tracebacks.
+panel shows the live **Preview** and the luminance histogram with the black/white points
+marked; the right panel holds the parameters grouped as Image / Levels / Geometry.
+
+The preview estimates how the part looks backlit: it uses total material thickness — base
+plate plus lithophane layer — with Beer–Lambert attenuation (μ = 0.35/mm), so a thicker
+base visibly dims the image. White means light passing through (bright), which is the
+inverted view of material thickness. It is display-only and never changes the STL.
+
+The preview zooms like a photo editor: use the **Zoom** slider (1×–8× relative to fit),
+the mouse wheel over the preview (anchored under the pointer), or **Fit** to go back to
+the whole heightmap; drag with the left mouse button to pan when zoomed in. The luminance
+histogram redraws to the full panel width as the window is resized.
+"Generate STL" runs the conversion on a worker thread, so progress, the status bar and the
+Result strip stay live and the window never freezes; failures appear as message boxes,
+never tracebacks.
 
 `tkinter` ships with CPython (on Debian/Ubuntu: `apt install python3-tk`). The GUI needs a
 display, but importing `lithomaker.gui` headless is safe — CI does exactly that.

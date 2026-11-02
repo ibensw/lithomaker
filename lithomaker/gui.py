@@ -92,9 +92,8 @@ IMAGE_FILE_TYPES = [
     ("All files", "*.*"),
 ]
 
-#: Heightmap section caption; swaps when "Invert preview" is ticked.
-HEIGHTMAP_CAPTION = "Heightmap (transmission + base, white = thick)"
-HEIGHTMAP_CAPTION_INVERTED = "Heightmap (transmission + base, white = bright)"
+#: Heading above the estimated backlit preview.
+PREVIEW_CAPTION = "Preview"
 
 #: Rough Beer–Lambert absorption of PLA-ish filament at visible wavelengths, per mm of
 #: material. The preview is an estimate — uniform absorption, no scattering — but it is
@@ -104,8 +103,11 @@ LIGHT_ABSORPTION_PER_MM = 0.35
 
 PREVIEW_WIDTH = 420
 PREVIEW_HEIGHT = 320
-SOURCE_PREVIEW_HEIGHT = 140
 HISTOGRAM_HEIGHT = 110
+#: Zoom multipliers relative to "fit to window" (1.0 = whole heightmap visible).
+ZOOM_MIN = 1.0
+ZOOM_MAX = 8.0
+ZOOM_STEP = 1.1
 #: Target vertex count along the long axis for the interactive heightmap preview.
 PREVIEW_MAX_VERTICES = 160
 
@@ -192,19 +194,16 @@ def transmission(heightmap, base_thickness: float = 0.0) -> np.ndarray:
     return np.exp(-LIGHT_ABSORPTION_PER_MM * thickness_mm)
 
 
-def heightmap_image(heightmap, invert: bool = False, base_thickness: float = 0.0):
-    """Render a :class:`lithomaker.core.Heightmap` as a grayscale preview.
+def heightmap_image(heightmap, base_thickness: float = 0.0) -> Image.Image:
+    """Render a :class:`lithomaker.core.Heightmap` as a backlit grayscale preview.
 
-    The preview estimates how the printed part looks backlit: thin areas transmit more
-    light than thick ones, and the **base plate is included** in the thickness (see
-    :func:`transmission`). By default the transmitted light is inverted, so white means
-    thick/opaque; ``invert=True`` shows the transmission itself, so white means
-    bright/thin. Both are display-only — the generated STL never changes. The array is
-    transposed because ``values`` is indexed ``[x, y]`` while PIL rows are Y.
+    Bright pixels are where more light passes through: the estimate uses total material
+    thickness — base plate plus lithophane layer — via :func:`transmission`. Display-only;
+    the generated STL never changes. The array is transposed because ``values`` is indexed
+    ``[x, y]`` while PIL rows are Y.
     """
     transmitted = transmission(heightmap, base_thickness)
-    shown = transmitted if invert else 1.0 - transmitted
-    pixels = np.round(np.clip(shown, 0.0, 1.0).T * 255.0).astype(np.uint8)
+    pixels = np.round(np.clip(transmitted, 0.0, 1.0).T * 255.0).astype(np.uint8)
     return Image.fromarray(pixels)
 
 
@@ -240,11 +239,14 @@ class LithomakerApp(ttk.Frame):
         self._rgb = None
         self._image_size = None
         self._luminance = None
-        self._source_photo = None
         self._preview_photo = None
         self._preview_image = None
-        self._last_heightmap = None
+        self._preview_source = None
+        self._preview_display = (0, 0)
+        self._preview_origin = (0, 0)
         self._preview_job = None
+        self._preview_resize_job = None
+        self._histogram_job = None
         self._busy = False
         self._queue: queue.Queue | None = None
         self._last_output: Path | None = None
@@ -275,8 +277,8 @@ class LithomakerApp(ttk.Frame):
         self.status_var = tk.StringVar(value="Open an image to begin.")
         self.progress_var = tk.DoubleVar(value=0.0)
         self.preview_info_var = tk.StringVar(value="")
-        self.invert_preview_var = tk.BooleanVar(value=False)
-        self.heightmap_caption_var = tk.StringVar(value=HEIGHTMAP_CAPTION)
+        self.zoom_var = tk.DoubleVar(value=ZOOM_MIN)
+        self.zoom_label_var = tk.StringVar(value="Fit")
         self.black_label_var = tk.StringVar(value="0.00")
         self.white_label_var = tk.StringVar(value="1.00")
         self.gamma_label_var = tk.StringVar(value="1.00")
@@ -305,48 +307,61 @@ class LithomakerApp(ttk.Frame):
         return frame
 
     def _build_preview(self, parent: ttk.Frame) -> None:
-        parent.rowconfigure(3, weight=1)
+        parent.rowconfigure(1, weight=1)
 
-        ttk.Label(parent, text="Source (grayscale)", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 4)
+        toolbar = ttk.Frame(parent)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        toolbar.columnconfigure(0, weight=1)
+        ttk.Label(toolbar, text=PREVIEW_CAPTION, style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
-        self.source_label = ttk.Label(
-            parent, text="No image loaded", anchor="center", relief="sunken", padding=4
+        ttk.Label(toolbar, text="Zoom").grid(row=0, column=1, padx=(8, 4))
+        self.zoom_scale = ttk.Scale(
+            toolbar, from_=ZOOM_MIN, to=ZOOM_MAX, variable=self.zoom_var, length=110
         )
-        self.source_label.grid(row=1, column=0, sticky="ew")
+        self.zoom_scale.grid(row=0, column=2)
+        ttk.Label(toolbar, textvariable=self.zoom_label_var, width=6, anchor="e").grid(
+            row=0, column=3, padx=(4, 2)
+        )
+        self.fit_button = ttk.Button(
+            toolbar, text="Fit", width=4, command=self._reset_zoom
+        )
+        self.fit_button.grid(row=0, column=4)
 
-        header = ttk.Frame(parent)
-        header.grid(row=2, column=0, sticky="ew", pady=(8, 4))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(
-            header, textvariable=self.heightmap_caption_var, style="Heading.TLabel"
-        ).grid(row=0, column=0, sticky="w")
-        self.invert_preview_check = ttk.Checkbutton(
-            header,
-            text="Invert preview",
-            variable=self.invert_preview_var,
-            command=self._on_invert_preview,
+        viewport = ttk.Frame(parent)
+        viewport.grid(row=1, column=0, sticky="nsew")
+        viewport.columnconfigure(0, weight=1)
+        viewport.rowconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(
+            viewport, background="#222222", highlightthickness=0, takefocus=1
         )
-        self.invert_preview_check.grid(row=0, column=1, sticky="e")
-        self.heightmap_label = ttk.Label(
-            parent, text="Adjust the parameters to see the heightmap", anchor="center",
-            relief="sunken", padding=4,
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_vbar = ttk.Scrollbar(
+            viewport, orient="vertical", command=self.preview_canvas.yview
         )
-        self.heightmap_label.grid(row=3, column=0, sticky="nsew")
+        self.preview_vbar.grid(row=0, column=1, sticky="ns")
+        self.preview_hbar = ttk.Scrollbar(
+            viewport, orient="horizontal", command=self.preview_canvas.xview
+        )
+        self.preview_hbar.grid(row=1, column=0, sticky="ew")
+        self.preview_canvas.configure(
+            yscrollcommand=self.preview_vbar.set, xscrollcommand=self.preview_hbar.set
+        )
+        self._show_preview_placeholder()
 
         ttk.Label(parent, text="Luminance histogram (black/white points marked)").grid(
-            row=4, column=0, sticky="w", pady=(8, 2)
+            row=2, column=0, sticky="w", pady=(8, 2)
         )
         self.histogram_canvas = tk.Canvas(
             parent, height=HISTOGRAM_HEIGHT, background="white", highlightthickness=1,
             highlightbackground="#c0c0c0",
         )
-        self.histogram_canvas.grid(row=5, column=0, sticky="ew")
+        self.histogram_canvas.grid(row=3, column=0, sticky="ew")
 
         ttk.Label(
             parent, textvariable=self.preview_info_var, style="Muted.TLabel",
             wraplength=PREVIEW_WIDTH, justify="left",
-        ).grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
     def _build_parameters(self, parent: ttk.Frame) -> None:
         row = 0
@@ -495,6 +510,17 @@ class LithomakerApp(ttk.Frame):
         ):
             variable.trace_add("write", self._schedule_preview)
         self.size_x_var.trace_add("write", self._on_size_x_changed)
+        self.zoom_var.trace_add("write", self._on_zoom_changed)
+
+        canvas = self.preview_canvas
+        canvas.bind("<Configure>", self._on_preview_configure)
+        canvas.bind("<MouseWheel>", self._on_preview_wheel)
+        canvas.bind("<Button-4>", lambda event: self._on_preview_wheel(event, delta=120))
+        canvas.bind("<Button-5>", lambda event: self._on_preview_wheel(event, delta=-120))
+        canvas.bind("<ButtonPress-1>", self._start_pan)
+        canvas.bind("<B1-Motion>", self._drag_pan)
+        canvas.bind("<ButtonRelease-1>", self._end_pan)
+        self.histogram_canvas.bind("<Configure>", self._on_histogram_configure)
 
     # -- parameter plumbing -------------------------------------------------
     def read_parameters(self) -> dict:
@@ -548,7 +574,6 @@ class LithomakerApp(ttk.Frame):
             return
 
         self._rgb = rgb
-        self._last_heightmap = None
         self._image_size = (rgb.shape[1], rgb.shape[0])
         self._luminance = to_luminance(rgb)
         self.image_path_var.set(str(path))
@@ -556,20 +581,9 @@ class LithomakerApp(ttk.Frame):
             self.output_path_var.set(str(Path(path).with_suffix(".stl")))
         if self.lock_aspect_var.get():
             self._apply_aspect_lock()
-        self._render_source_image()
         self._draw_histogram()
         self.status_var.set("Image loaded. Adjust levels, then generate.")
-        self._schedule_preview()
-
-    def _render_source_image(self) -> None:
-        """Show the source in grayscale, the channel the levels actually operate on."""
-        if self._luminance is None:
-            return
-        pixels = np.round(np.clip(self._luminance, 0.0, 1.0) * 255.0).astype(np.uint8)
-        image = Image.fromarray(pixels)
-        image.thumbnail((PREVIEW_WIDTH, SOURCE_PREVIEW_HEIGHT))
-        self._source_photo = ImageTk.PhotoImage(image)
-        self.source_label.configure(image=self._source_photo, text="")
+        self._render_heightmap_preview()
 
     def _on_levels_changed(self, *_args) -> None:
         self.black_label_var.set(f"{self.black_var.get():.2f}")
@@ -578,13 +592,24 @@ class LithomakerApp(ttk.Frame):
         self._draw_histogram()
         self._schedule_preview()
 
+    def _on_histogram_configure(self, _event=None) -> None:
+        """Redraw the histogram at the canvas's new width (debounced while resizing)."""
+        if self._histogram_job is not None:
+            self.after_cancel(self._histogram_job)
+        self._histogram_job = self.after(40, self._draw_histogram)
+
     def _draw_histogram(self) -> None:
+        self._histogram_job = None
         canvas = self.histogram_canvas
         canvas.delete("all")
         if self._luminance is None:
             return
-        width = max(canvas.winfo_width(), PREVIEW_WIDTH)
-        height = HISTOGRAM_HEIGHT
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1:
+            width = PREVIEW_WIDTH
+        if height <= 1:
+            height = HISTOGRAM_HEIGHT
         counts, _edges = np.histogram(self._luminance, bins=128, range=(0.0, 1.0))
         canvas.create_polygon(
             histogram_points(counts, width, height), fill="#9ec7e8", outline="#3c78a8"
@@ -628,19 +653,17 @@ class LithomakerApp(ttk.Frame):
             self.preview_info_var.set(f"preview unavailable: {exc}")
             return
 
-        self._last_heightmap = heightmap
-        self._last_base_thickness = config.base_thickness
-        self._apply_heightmap_image(heightmap)
-        self._update_preview_info(heightmap)
+        self._apply_heightmap_image(heightmap, config.base_thickness)
+        self._update_preview_info(heightmap, config.base_thickness)
 
-    def _update_preview_info(self, heightmap) -> None:
+    def _update_preview_info(self, heightmap, base_thickness: float) -> None:
         try:
             footprint = self.current_config().resolved_size(*self._image_size)
             mm = f"{footprint.x:.1f} × {footprint.y:.1f} mm"
         except (ConfigError, ValueError):
             mm = "size pending"
         nx, ny = heightmap.grid_shape
-        base = self._last_base_thickness
+        base = float(base_thickness)
         total_low = base + heightmap.z_min
         total_high = base + heightmap.z_max
         self.preview_info_var.set(
@@ -650,27 +673,126 @@ class LithomakerApp(ttk.Frame):
             f"(μ {LIGHT_ABSORPTION_PER_MM:g}/mm)"
         )
 
-    def _apply_heightmap_image(self, heightmap) -> None:
-        """Draw the cached heightmap in the current preview polarity."""
-        image = heightmap_image(
-            heightmap,
-            invert=self.invert_preview_var.get(),
-            base_thickness=self._last_base_thickness,
+    def _apply_heightmap_image(self, heightmap, base_thickness: float) -> None:
+        """Render the estimated backlit appearance at heightmap resolution."""
+        self._preview_source = heightmap_image(heightmap, base_thickness=base_thickness)
+        self._render_preview_canvas()
+
+    # -- preview zoom & pan -------------------------------------------------
+    def _on_zoom_changed(self, *_args) -> None:
+        value = float(self.zoom_var.get())
+        clamped = min(max(value, ZOOM_MIN), ZOOM_MAX)
+        if abs(clamped - value) > 1e-9:
+            self.zoom_var.set(clamped)
+            return
+        self.zoom_label_var.set("Fit" if abs(clamped - 1.0) < 1e-6 else f"{clamped:.1f}×")
+        self._render_preview_canvas()
+
+    def _reset_zoom(self) -> None:
+        self.zoom_var.set(ZOOM_MIN)
+
+    def _on_preview_wheel(self, event, delta=None):
+        """Mouse wheel zoom, anchored under the pointer (photo-editor style)."""
+        step = getattr(event, "delta", 0) if delta is None else delta
+        if not step:
+            return "break"
+        self._zoom_at(
+            getattr(event, "x", 0),
+            getattr(event, "y", 0),
+            ZOOM_STEP if step > 0 else 1.0 / ZOOM_STEP,
         )
-        image.thumbnail((PREVIEW_WIDTH, PREVIEW_HEIGHT), Image.Resampling.NEAREST)
+        return "break"
+
+    def _zoom_at(self, x: int, y: int, factor: float) -> None:
+        current = float(self.zoom_var.get())
+        target = min(max(current * factor, ZOOM_MIN), ZOOM_MAX)
+        if abs(target - current) < 1e-9 or self._preview_source is None:
+            self.zoom_var.set(target)
+            return
+
+        canvas = self.preview_canvas
+        width, height = self._preview_display
+        origin_x, origin_y = self._preview_origin
+        focus_x = ((canvas.canvasx(x) - origin_x) / width) if width else 0.5
+        focus_y = ((canvas.canvasy(y) - origin_y) / height) if height else 0.5
+
+        self.zoom_var.set(target)  # the trace re-renders and resets the display size
+
+        new_width, new_height = self._preview_display
+        new_origin_x, new_origin_y = self._preview_origin
+        region_w = max(new_width, canvas.winfo_width(), 1)
+        region_h = max(new_height, canvas.winfo_height(), 1)
+        left = new_origin_x + focus_x * new_width - x
+        top = new_origin_y + focus_y * new_height - y
+        canvas.xview_moveto(min(max(left / region_w, 0.0), 1.0))
+        canvas.yview_moveto(min(max(top / region_h, 0.0), 1.0))
+
+    def _start_pan(self, event) -> None:
+        self.preview_canvas.scan_mark(event.x, event.y)
+        self.preview_canvas.configure(cursor="fleur")
+
+    def _drag_pan(self, event) -> None:
+        self.preview_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _end_pan(self, _event=None) -> None:
+        self.preview_canvas.configure(cursor="")
+
+    def _on_preview_configure(self, _event=None) -> None:
+        if self._preview_resize_job is not None:
+            self.after_cancel(self._preview_resize_job)
+        self._preview_resize_job = self.after(60, self._render_preview_canvas)
+
+    def _show_preview_placeholder(self) -> None:
+        canvas = self.preview_canvas
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1:
+            width = PREVIEW_WIDTH
+        if height <= 1:
+            height = PREVIEW_HEIGHT
+        canvas.configure(scrollregion=(0, 0, width, height))
+        canvas.create_text(
+            width // 2,
+            height // 2,
+            text="Open an image to see the preview",
+            fill="#b0b0b0",
+            tags=("placeholder",),
+        )
+
+    def _render_preview_canvas(self) -> None:
+        self._preview_resize_job = None
+        if self._preview_source is None:
+            self._show_preview_placeholder()
+            return
+
+        canvas = self.preview_canvas
+        viewport_w = canvas.winfo_width()
+        viewport_h = canvas.winfo_height()
+        if viewport_w <= 1 or viewport_h <= 1:
+            viewport_w, viewport_h = PREVIEW_WIDTH, PREVIEW_HEIGHT
+
+        source_w, source_h = self._preview_source.size
+        zoom = float(self.zoom_var.get())
+        fit = min(viewport_w / source_w, viewport_h / source_h)
+        display_w = max(1, int(round(source_w * fit * zoom)))
+        display_h = max(1, int(round(source_h * fit * zoom)))
+        resample = (
+            Image.Resampling.NEAREST if zoom > 1.0 else Image.Resampling.BILINEAR
+        )
+        image = self._preview_source.resize((display_w, display_h), resample)
         self._preview_image = image
         self._preview_photo = ImageTk.PhotoImage(image)
-        self.heightmap_label.configure(image=self._preview_photo, text="")
 
-    def _on_invert_preview(self) -> None:
-        """Flip the preview polarity; the STL is unaffected (display-only setting)."""
-        inverted = self.invert_preview_var.get()
-        self.heightmap_caption_var.set(
-            HEIGHTMAP_CAPTION_INVERTED if inverted else HEIGHTMAP_CAPTION
-        )
-        if self._last_heightmap is not None:
-            self._apply_heightmap_image(self._last_heightmap)
-            self._update_preview_info(self._last_heightmap)
+        region_w = max(display_w, viewport_w)
+        region_h = max(display_h, viewport_h)
+        origin_x = (region_w - display_w) // 2
+        origin_y = (region_h - display_h) // 2
+        canvas.delete("all")
+        canvas.create_image(origin_x, origin_y, anchor="nw", image=self._preview_photo)
+        canvas.configure(scrollregion=(0, 0, region_w, region_h))
+        self._preview_display = (display_w, display_h)
+        self._preview_origin = (origin_x, origin_y)
 
     # -- conversion ---------------------------------------------------------
     def _on_generate(self) -> None:

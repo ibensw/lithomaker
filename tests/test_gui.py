@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -22,6 +23,8 @@ from lithomaker.config import ConfigError
 from lithomaker.core import Heightmap
 from lithomaker.gui import (
     PARAMETER_MAP,
+    ZOOM_MAX,
+    ZOOM_MIN,
     config_from_parameters,
     heightmap_image,
     histogram_points,
@@ -193,25 +196,15 @@ def _heightmap(values: np.ndarray) -> Heightmap:
     )
 
 
-def test_heightmap_image_shows_thickness_not_brightness():
-    # values is indexed [x, y]: one row of two X pixels.
+def test_heightmap_image_shows_transmitted_light():
+    # values is indexed [x, y]: one column of two X pixels.
     heightmap = _heightmap(np.array([[1.0], [0.0]], dtype=np.float32))
 
     image = heightmap_image(heightmap)
     pixels = np.asarray(image)
 
     assert image.mode == "L"
-    # Bright source pixel (1.0) is thin -> transmits more -> darker in the thick-white view.
-    assert pixels[0, 0] < pixels[0, 1]
-
-
-def test_heightmap_image_can_be_inverted_for_the_preview():
-    heightmap = _heightmap(np.array([[1.0], [0.0]], dtype=np.float32))
-
-    image = heightmap_image(heightmap, invert=True)
-    pixels = np.asarray(image)
-
-    # Preview-only flip: the thin/bright pixel transmits more light than the thick one.
+    # Bright source pixel (1.0) is thin -> more light gets through -> lighter preview.
     assert pixels[0, 0] > pixels[0, 1]
 
 
@@ -236,16 +229,7 @@ def test_base_plate_thickness_dims_the_preview():
     thin_plate = heightmap_image(heightmap, base_thickness=0.0)
     thick_plate = heightmap_image(heightmap, base_thickness=3.0)
 
-    # Thick-white view: more material everywhere -> lighter pixels.
-    assert np.asarray(thick_plate).mean() > np.asarray(thin_plate).mean()
-
-
-def test_base_plate_reduces_transmitted_light():
-    heightmap = _heightmap(np.array([[1.0], [0.5]], dtype=np.float32))
-
-    thin_plate = heightmap_image(heightmap, base_thickness=0.0, invert=True)
-    thick_plate = heightmap_image(heightmap, base_thickness=3.0, invert=True)
-
+    # More material everywhere -> less transmitted light -> darker preview.
     assert np.asarray(thick_plate).mean() < np.asarray(thin_plate).mean()
 
 
@@ -356,10 +340,7 @@ def test_loading_an_image_fills_the_output_and_preview(app, tmp_path):
 
     assert app.image_path_var.get() == str(path)
     assert app.output_path_var.get() == str(path.with_suffix(".stl"))
-    assert app._source_photo is not None
-    assert app._preview_photo is None  # heightmap is built on the debounce
-    app._render_heightmap_preview()
-    assert app._preview_photo is not None
+    assert app._preview_photo is not None  # rendered immediately on load
     assert app.preview_info_var.get().startswith("heightmap")
 
 
@@ -521,53 +502,151 @@ def test_busy_state_disables_the_generate_button(app):
 
 
 @requires_display
-def test_invert_toggle_flips_the_preview_without_touching_parameters(app, tmp_path):
-    app.load_image_file(make_png(tmp_path))
-    app._render_heightmap_preview()
-    before = np.asarray(app._preview_image).copy()
-    parameters_before = app.read_parameters()
-
-    app.invert_preview_var.set(True)
-    app._on_invert_preview()
-
-    after = np.asarray(app._preview_image)
-    assert not np.array_equal(before, after)
-    assert "base" in app.preview_info_var.get()
-    assert "white = bright" in app.heightmap_caption_var.get()
-    assert app.read_parameters() == parameters_before
-    assert "invert" not in app.read_parameters()
-
-
-@requires_display
-def test_invert_toggle_is_display_only_and_absent_from_parity_map():
-    assert "invert_preview" not in PARAMETER_MAP
-    assert "invert_preview" not in PARAMETER_MAP.values()
-    assert "invert_preview_var" not in PARAMETER_MAP.values()
-
-
-@requires_display
-def test_invert_toggle_before_a_preview_is_safe(app):
-    app.invert_preview_var.set(True)
-
-    app._on_invert_preview()
-
+def test_preview_panel_has_one_zoomable_preview_and_no_toggle(app):
+    assert hasattr(app, "preview_canvas")
+    assert hasattr(app, "zoom_scale")
+    assert hasattr(app, "fit_button")
+    assert not hasattr(app, "preview_label")
+    assert not hasattr(app, "source_label")
+    assert not hasattr(app, "invert_preview_var")
+    assert not hasattr(app, "invert_preview_check")
     assert app._preview_image is None
-    assert "white = bright" in app.heightmap_caption_var.get()
+
+    texts = [
+        app.preview_canvas.itemcget(item, "text")
+        for item in app.preview_canvas.find_all()
+    ]
+    assert any("Open an image" in text for text in texts)
 
 
 @requires_display
-def test_invert_toggle_can_be_switched_back(app, tmp_path):
-    app.load_image_file(make_png(tmp_path))
+def test_preview_shows_bright_areas_light_by_default(app, tmp_path):
+    # Left half white, right half black: the left half is thin and transmits light.
+    pixels = np.zeros((10, 20, 3), dtype=np.uint8)
+    pixels[:, :10] = 255
+    path = tmp_path / "halves.png"
+    Image.fromarray(pixels).save(path)
+
+    app.load_image_file(path)
     app._render_heightmap_preview()
-    original = np.asarray(app._preview_image).copy()
 
-    app.invert_preview_var.set(True)
-    app._on_invert_preview()
-    app.invert_preview_var.set(False)
-    app._on_invert_preview()
+    preview = np.asarray(app._preview_image)
+    assert preview[:, : preview.shape[1] // 2].mean() > preview[:, preview.shape[1] // 2 :].mean()
+    assert "base" in app.preview_info_var.get()
 
-    np.testing.assert_array_equal(np.asarray(app._preview_image), original)
-    assert "white = thick" in app.heightmap_caption_var.get()
+
+@requires_display
+def test_histogram_scales_with_the_canvas_width(app, tmp_path, monkeypatch):
+    app.load_image_file(make_png(tmp_path))
+    monkeypatch.setattr(app.histogram_canvas, "winfo_width", lambda: 640)
+    monkeypatch.setattr(app.histogram_canvas, "winfo_height", lambda: 120)
+
+    app._draw_histogram()
+
+    canvas = app.histogram_canvas
+    polygons = [item for item in canvas.find_all() if canvas.type(item) == "polygon"]
+    lines = [item for item in canvas.find_all() if canvas.type(item) == "line"]
+    bbox = canvas.bbox(polygons[0])
+    assert bbox[2] - bbox[0] >= 639
+    marker_xs = {canvas.coords(item)[0] for item in lines}
+    assert 0.0 in marker_xs
+    assert 640.0 in marker_xs  # the white point marker follows the canvas width
+
+
+@requires_display
+def test_histogram_redraws_after_a_resize_event(app, tmp_path):
+    app.load_image_file(make_png(tmp_path))
+    app.histogram_canvas.delete("all")
+
+    app._on_histogram_configure()
+
+    assert app._histogram_job is not None
+    assert pump(app.winfo_toplevel(), lambda: app._histogram_job is None, timeout=2)
+    assert app.histogram_canvas.find_all()
+
+
+@requires_display
+def test_zoom_defaults_to_fit(app, tmp_path):
+    app.load_image_file(make_png(tmp_path))
+
+    assert app.zoom_var.get() == pytest.approx(ZOOM_MIN)
+    assert app.zoom_label_var.get() == "Fit"
+    fit_width = app._preview_image.width
+
+    app.zoom_var.set(2.0)
+
+    assert app._preview_image.width == pytest.approx(fit_width * 2, abs=2)
+    assert app.zoom_label_var.get() == "2.0×"
+
+
+@requires_display
+def test_mouse_wheel_zooms_the_preview(app, tmp_path):
+    app.load_image_file(make_png(tmp_path))
+    before = app._preview_image.width
+
+    app._on_preview_wheel(SimpleNamespace(delta=120, x=10, y=10))
+
+    assert app.zoom_var.get() == pytest.approx(1.1)
+    assert app._preview_image.width > before
+
+    app._on_preview_wheel(SimpleNamespace(delta=-120, x=10, y=10))
+
+    assert app.zoom_var.get() == pytest.approx(1.0)
+
+
+@requires_display
+def test_zoom_is_clamped_to_the_supported_range(app, tmp_path):
+    app.load_image_file(make_png(tmp_path))
+
+    for _ in range(80):
+        app._on_preview_wheel(SimpleNamespace(delta=120, x=0, y=0))
+    assert app.zoom_var.get() == pytest.approx(ZOOM_MAX)
+
+    for _ in range(200):
+        app._on_preview_wheel(SimpleNamespace(delta=-120, x=0, y=0))
+    assert app.zoom_var.get() == pytest.approx(ZOOM_MIN)
+    assert app.zoom_label_var.get() == "Fit"
+
+
+@requires_display
+def test_fit_button_restores_the_whole_view(app, tmp_path):
+    app.load_image_file(make_png(tmp_path))
+    app.zoom_var.set(3.0)
+
+    app.fit_button.invoke()
+
+    assert app.zoom_var.get() == pytest.approx(ZOOM_MIN)
+    assert app.zoom_label_var.get() == "Fit"
+
+
+@requires_display
+def test_zooming_makes_the_preview_scrollable(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(app.preview_canvas, "winfo_width", lambda: 200)
+    monkeypatch.setattr(app.preview_canvas, "winfo_height", lambda: 200)
+    app.load_image_file(make_png(tmp_path))
+    app._render_preview_canvas()
+
+    app.zoom_var.set(4.0)
+
+    region = [float(value) for value in app.preview_canvas.cget("scrollregion").split()]
+    assert region[2] > 200
+    assert region[3] > 200
+
+
+@requires_display
+def test_dragging_the_preview_pans(app, tmp_path, monkeypatch):
+    app.load_image_file(make_png(tmp_path))
+    app.zoom_var.set(4.0)
+    marks = []
+    monkeypatch.setattr(app.preview_canvas, "scan_mark", lambda x, y: marks.append(("mark", x, y)))
+    monkeypatch.setattr(app.preview_canvas, "scan_dragto", lambda x, y, gain: marks.append(("drag", x, y)))
+
+    app._start_pan(SimpleNamespace(x=5, y=6))
+    app._drag_pan(SimpleNamespace(x=15, y=16))
+    app._end_pan()
+
+    assert marks == [("mark", 5, 6), ("drag", 15, 16)]
+    assert app.preview_canvas.cget("cursor") == ""
 
 
 @requires_display
