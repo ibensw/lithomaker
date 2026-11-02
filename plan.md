@@ -92,12 +92,12 @@ lithomaker --help
 | `-b` | `--black` | float | 0.0 | Levels black point (0–1) |
 | `-w` | `--white` | float | 1.0 | Levels white point (0–1) |
 | `-g` | `--gamma` | float | 1.0 | Levels gamma |
-| `--max-layers` | int | 32 | Maximum Z layers (excl. base) |
+| `--max-layers` | int | 13 | Maximum Z layers (excl. base) |
 | `--thickness` | float | 0.2 | Layer thickness in mm |
 | `--size-x` | float | 120.0 | Output width in mm |
 | `--size-y` | float | — | Output height in mm (defaults to aspect-correct) |
 | `--dot-size` | float | 0.4 | XY dot/pixel size in mm |
-| `--base-thickness` | float | 1.0 | Base plate thickness in mm |
+| `--base-thickness` | float | 0.4 | Base plate thickness in mm |
 
 ### Example
 ```bash

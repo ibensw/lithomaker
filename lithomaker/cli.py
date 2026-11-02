@@ -177,9 +177,9 @@ def cli() -> None:
               help="Derive the levels window from the histogram of the image.")
 @click.option("--auto-levels/--no-auto-levels", "auto_flag", default=None,
               help="Boolean spelling of --levels auto; ignores --black/--white/--gamma.")
-@click.option("--min-layers", type=int, default=4, show_default=True,
+@click.option("--min-layers", type=int, default=1, show_default=True,
               help="Minimum Z layers above the base.")
-@click.option("--max-layers", type=int, default=32, show_default=True,
+@click.option("--max-layers", type=int, default=13, show_default=True,
               help="Maximum Z layers above the base.")
 @click.option("--thickness", type=float, default=0.2, show_default=True,
               help="Layer thickness in mm.")
@@ -189,7 +189,7 @@ def cli() -> None:
               help="Output height in mm (defaults to aspect-correct).")
 @click.option("--dot-size", type=float, default=0.4, show_default=True,
               help="XY dot/pixel pitch in mm; smaller means more detail and more triangles.")
-@click.option("--base-thickness", type=float, default=1.0, show_default=True,
+@click.option("--base-thickness", type=float, default=0.4, show_default=True,
               help="Flat base plate thickness in mm.")
 @click.option("--ascii/--binary", "ascii_flag", default=None,
               help="STL flavour (default: binary).")

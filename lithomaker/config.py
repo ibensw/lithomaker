@@ -176,13 +176,13 @@ class LithoConfig:
     input: PathLike
     output: PathLike | None = None
     levels: LevelsConfig | dict | None = field(default_factory=LevelsConfig)
-    min_layers: int = 4
-    max_layers: int = 32
+    min_layers: int = 1
+    max_layers: int = 13
     thickness: float = 0.2
     size_x: float = 120.0
     size_y: float | None = None
     dot_size: float = 0.4
-    base_thickness: float = 1.0
+    base_thickness: float = 0.4
     ascii: bool = False
 
     # -- validation ---------------------------------------------------------

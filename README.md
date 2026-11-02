@@ -49,13 +49,13 @@ tool composes cleanly in pipelines.
 | `-g, --gamma` | float | `1.0` | Levels gamma (> 0; above 1 darkens midtones) |
 | `--levels` | `auto`\|`manual` | `manual` | Derive the levels window from the image histogram |
 | `--auto-levels/--no-auto-levels` | flag | off | Boolean spelling of `--levels auto`; when on, black/white/gamma are ignored with a warning |
-| `--min-layers` | int | `4` | Minimum Z layers above the base |
-| `--max-layers` | int | `32` | Maximum Z layers above the base |
+| `--min-layers` | int | `1` | Minimum Z layers above the base |
+| `--max-layers` | int | `13` | Maximum Z layers above the base |
 | `--thickness` | float | `0.2` | Layer thickness in mm |
 | `--size-x` | float | `120.0` | Output width in mm |
 | `--size-y` | float | aspect-correct | Output height in mm; defaults to `size_x × image_h / image_w` |
 | `--dot-size` | float | `0.4` | XY dot/pixel pitch in mm — detail versus triangle count |
-| `--base-thickness` | float | `1.0` | Flat base plate thickness in mm |
+| `--base-thickness` | float | `0.4` | Flat base plate thickness in mm |
 | `--ascii/--binary` | flag | binary | STL flavour |
 | `--format` | `binary`\|`ascii` | — | Long-form spelling of the flag above |
 | `--force` | flag | off | Overwrite an existing output file |
@@ -79,9 +79,11 @@ lithomaker-gui              # gui-script entry point
 ```
 
 The window is a thin wrapper over the same `core.convert()` the CLI uses, so every
-processing parameter has a widget (the mapping is machine-checked by the tests). The left
-panel shows the live **Preview** and the luminance histogram with the black/white points
-marked; the right panel holds the parameters grouped as Image / Levels / Geometry.
+processing parameter has a widget (the mapping is machine-checked by the tests). It uses a
+flat card theme built on `ttk`'s `clam` engine: a header with the app title and the primary
+**Generate STL** action, the live **Preview** and luminance histogram on a white card, the
+parameters grouped as Image / Levels / Geometry on the right, and a metric strip
+(vertices, triangles, Z range, footprint, file size) above the status bar.
 
 The preview estimates how the part looks backlit: it uses total material thickness — base
 plate plus lithophane layer — with Beer–Lambert attenuation (μ = 0.35/mm), so a thicker
@@ -95,6 +97,11 @@ histogram redraws to the full panel width as the window is resized.
 "Generate STL" runs the conversion on a worker thread, so progress, the status bar and the
 Result strip stay live and the window never freezes; failures appear as message boxes,
 never tracebacks.
+
+File pickers use the desktop's own dialog: GTK's picker through `zenity`, then
+`kdialog`, on Linux; the native dialog Tk already provides on Windows and macOS. If
+neither helper is installed it falls back to Tk's own dialog, so nothing extra is
+required.
 
 `tkinter` ships with CPython (on Debian/Ubuntu: `apt install python3-tk`). The GUI needs a
 display, but importing `lithomaker.gui` headless is safe — CI does exactly that.

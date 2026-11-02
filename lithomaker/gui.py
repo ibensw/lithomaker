@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -100,6 +101,22 @@ PREVIEW_CAPTION = "Preview"
 #: *absolute*: the base plate and the layer thickness both attenuate the light, so
 #: "why does a thicker base look darker?" has a visible answer.
 LIGHT_ABSORPTION_PER_MM = 0.35
+
+#: Flat light palette shared by every ttk style created in :func:`_configure_styles`.
+PALETTE = {
+    "bg": "#f3f5f7",
+    "surface": "#ffffff",
+    "border": "#e2e6ea",
+    "text": "#111827",
+    "muted": "#6b7280",
+    "accent": "#2563eb",
+    "accent_hover": "#1d4ed8",
+    "accent_fg": "#ffffff",
+    "accent_disabled": "#a9c1f5",
+    "hover": "#eef2f7",
+    "trough": "#e5e7eb",
+    "canvas": "#0f172a",
+}
 
 PREVIEW_WIDTH = 420
 PREVIEW_HEIGHT = 320
@@ -217,6 +234,82 @@ def histogram_points(counts: np.ndarray, width: int, height: int) -> list:
     return [(0.0, float(height)), *zip(xs, ys), (float(width), float(height))]
 
 
+def _run_picker(command: list[str]) -> tuple[bool, str | None]:
+    """Run a desktop picker command.
+
+    Returns ``(handled, chosen)``: ``handled`` is false only when the command could not
+    be started, so the caller can fall back to Tk's dialog. A non-zero exit status means
+    the user dismissed the dialog, which is ``(True, None)`` rather than an error.
+    """
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError:  # pragma: no cover - race between which() and exec
+        return False, None
+    if completed.returncode != 0:
+        return True, None
+    chosen = completed.stdout.strip()
+    return True, chosen or None
+
+
+def _native_open_image(initial: str | None = None) -> tuple[bool, str | None]:
+    """Ask the desktop's own GTK/Qt picker, when one is available.
+
+    Tk's X11 file dialog ignores the ttk theme and looks dated on GTK/KDE desktops, so
+    prefer ``zenity`` (which goes through the desktop portal) and then ``kdialog``.
+    Windows and macOS already get a native dialog from Tk, so they keep using it.
+    """
+    if sys.platform in ("win32", "darwin"):
+        return False, None
+
+    images = "Images | *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"
+    if shutil.which("zenity"):
+        command = [
+            "zenity",
+            "--file-selection",
+            "--title=Open image",
+            f"--file-filter={images}",
+            "--file-filter=All files | *",
+        ]
+        if initial:
+            command.append(f"--filename={initial}")
+        return _run_picker(command)
+    if shutil.which("kdialog"):
+        start = initial or str(Path.home())
+        return _run_picker(
+            [
+                "kdialog",
+                "--getopenfilename",
+                start,
+                "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp)",
+            ]
+        )
+    return False, None
+
+
+def _native_save_stl(initial: str | None = None) -> tuple[bool, str | None]:
+    """Native "save STL as" picker; see :func:`_native_open_image`."""
+    if sys.platform in ("win32", "darwin"):
+        return False, None
+
+    if shutil.which("zenity"):
+        command = [
+            "zenity",
+            "--file-selection",
+            "--save",
+            "--confirm-overwrite",
+            "--title=Save STL as",
+            "--file-filter=STL | *.stl",
+            "--file-filter=All files | *",
+        ]
+        if initial:
+            command.append(f"--filename={initial}")
+        return _run_picker(command)
+    if shutil.which("kdialog"):
+        start = initial or str(Path.home())
+        return _run_picker(["kdialog", "--getsavefilename", start, "STL (*.stl)"])
+    return False, None
+
+
 def _open_in_file_manager(path: Path) -> None:
     """Best-effort "show in folder" across platforms."""
     directory = str(path.parent if path.suffix else path)
@@ -264,13 +357,13 @@ class LithomakerApp(ttk.Frame):
         self.white_var = tk.DoubleVar(value=1.0)
         self.gamma_var = tk.DoubleVar(value=1.0)
         self.auto_levels_var = tk.BooleanVar(value=False)
-        self.min_layers_var = tk.IntVar(value=4)
-        self.max_layers_var = tk.IntVar(value=32)
+        self.min_layers_var = tk.IntVar(value=1)
+        self.max_layers_var = tk.IntVar(value=13)
         self.thickness_var = tk.StringVar(value="0.2")
         self.size_x_var = tk.StringVar(value="120")
         self.size_y_var = tk.StringVar(value="")
         self.dot_size_var = tk.StringVar(value="0.4")
-        self.base_thickness_var = tk.StringVar(value="1.0")
+        self.base_thickness_var = tk.StringVar(value="0.4")
         self.lock_aspect_var = tk.BooleanVar(value=True)
         self.ascii_var = tk.BooleanVar(value=False)
         self.force_var = tk.BooleanVar(value=False)
@@ -288,52 +381,92 @@ class LithomakerApp(ttk.Frame):
         }
 
     def _build_layout(self) -> None:
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=2)
-        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        self._build_preview(self._panel(side="left"))
-        self._build_parameters(self._panel(side="right"))
+        self._build_header()
+
+        body = ttk.Panedwindow(self, orient="horizontal")
+        body.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        preview_pane = ttk.Frame(body, style="Card.TFrame", padding=(14, 12))
+        parameters_pane = ttk.Frame(body, style="Card.TFrame", padding=(16, 14))
+        body.add(preview_pane, weight=3)
+        body.add(parameters_pane, weight=2)
+        self._build_preview(preview_pane)
+        self._build_parameters(parameters_pane)
+
         self._build_results()
         self._build_status_bar()
 
-    def _panel(self, side: str) -> ttk.Frame:
-        frame = ttk.Frame(self)
-        if side == "left":
-            frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        else:
-            frame.grid(row=0, column=1, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        return frame
+    def _build_header(self) -> None:
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+
+        titles = ttk.Frame(header)
+        titles.grid(row=0, column=0, sticky="w")
+        ttk.Label(titles, text="Lithomaker", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            titles,
+            text="Turn a photo into a printable lithophane",
+            style="Subtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+
+        self.open_button = ttk.Button(
+            header, text="Open image…", command=self._browse_image
+        )
+        self.open_button.grid(row=0, column=1, rowspan=2, padx=(12, 8))
+        self.generate_button = ttk.Button(
+            header, text="Generate STL", command=self._on_generate, style="Accent.TButton"
+        )
+        self.generate_button.grid(row=0, column=2, rowspan=2)
 
     def _build_preview(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
         parent.rowconfigure(1, weight=1)
 
-        toolbar = ttk.Frame(parent)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        toolbar = ttk.Frame(parent, style="Card.TFrame")
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         toolbar.columnconfigure(0, weight=1)
         ttk.Label(toolbar, text=PREVIEW_CAPTION, style="Heading.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(toolbar, text="Zoom").grid(row=0, column=1, padx=(8, 4))
+        ttk.Label(toolbar, text="Zoom", style="Card.TLabel").grid(
+            row=0, column=1, padx=(8, 6)
+        )
         self.zoom_scale = ttk.Scale(
-            toolbar, from_=ZOOM_MIN, to=ZOOM_MAX, variable=self.zoom_var, length=110
+            toolbar,
+            from_=ZOOM_MIN,
+            to=ZOOM_MAX,
+            variable=self.zoom_var,
+            length=110,
+            style="Card.Horizontal.TScale",
         )
         self.zoom_scale.grid(row=0, column=2)
-        ttk.Label(toolbar, textvariable=self.zoom_label_var, width=6, anchor="e").grid(
-            row=0, column=3, padx=(4, 2)
-        )
+        ttk.Label(
+            toolbar,
+            textvariable=self.zoom_label_var,
+            width=6,
+            anchor="e",
+            style="Card.TLabel",
+        ).grid(row=0, column=3, padx=(4, 4))
         self.fit_button = ttk.Button(
             toolbar, text="Fit", width=4, command=self._reset_zoom
         )
         self.fit_button.grid(row=0, column=4)
 
-        viewport = ttk.Frame(parent)
+        viewport = ttk.Frame(parent, style="Card.TFrame")
         viewport.grid(row=1, column=0, sticky="nsew")
         viewport.columnconfigure(0, weight=1)
         viewport.rowconfigure(0, weight=1)
         self.preview_canvas = tk.Canvas(
-            viewport, background="#222222", highlightthickness=0, takefocus=1
+            viewport,
+            background=PALETTE["canvas"],
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            takefocus=1,
         )
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_vbar = ttk.Scrollbar(
@@ -349,61 +482,86 @@ class LithomakerApp(ttk.Frame):
         )
         self._show_preview_placeholder()
 
-        ttk.Label(parent, text="Luminance histogram (black/white points marked)").grid(
-            row=2, column=0, sticky="w", pady=(8, 2)
-        )
+        ttk.Label(
+            parent,
+            text="Luminance histogram",
+            style="Section.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(10, 4))
         self.histogram_canvas = tk.Canvas(
-            parent, height=HISTOGRAM_HEIGHT, background="white", highlightthickness=1,
-            highlightbackground="#c0c0c0",
+            parent,
+            height=HISTOGRAM_HEIGHT,
+            background=PALETTE["surface"],
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
         )
         self.histogram_canvas.grid(row=3, column=0, sticky="ew")
 
         ttk.Label(
-            parent, textvariable=self.preview_info_var, style="Muted.TLabel",
-            wraplength=PREVIEW_WIDTH, justify="left",
-        ).grid(row=4, column=0, sticky="w", pady=(6, 0))
+            parent,
+            textvariable=self.preview_info_var,
+            style="Muted.TLabel",
+            wraplength=PREVIEW_WIDTH,
+            justify="left",
+        ).grid(row=4, column=0, sticky="w", pady=(8, 0))
 
     def _build_parameters(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
         row = 0
         row = self._build_image_group(parent, row)
         row = self._build_levels_group(parent, row)
         row = self._build_geometry_group(parent, row)
         row = self._build_format_group(parent, row)
-        row = self._build_action_group(parent, row)
         parent.rowconfigure(row, weight=1)
 
-    def _group(self, parent: ttk.Frame, title: str, row: int) -> ttk.LabelFrame:
-        frame = ttk.LabelFrame(parent, text=title, padding=8)
-        frame.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+    def _group(self, parent: ttk.Frame, title: str, row: int) -> ttk.Frame:
+        """A flat card section: small uppercase caption above the fields."""
+        section = ttk.Frame(parent, style="Card.TFrame")
+        section.grid(row=row, column=0, sticky="ew", pady=(0, 16))
+        section.columnconfigure(0, weight=1)
+        ttk.Label(section, text=title.upper(), style="Section.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        frame = ttk.Frame(section, style="Card.TFrame")
+        frame.grid(row=1, column=0, sticky="ew")
         frame.columnconfigure(1, weight=1)
         return frame
 
     @staticmethod
     def _entry_row(frame, row, label, variable, width=16):
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Label(frame, text=label, style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=3
+        )
         entry = ttk.Entry(frame, textvariable=variable, width=width)
-        entry.grid(row=row, column=1, sticky="ew", pady=2)
+        entry.grid(row=row, column=1, sticky="ew", pady=3)
         return entry
 
     def _build_image_group(self, parent, row):
         frame = self._group(parent, "Image", row)
         self.image_entry = self._entry_row(frame, 0, "Image", self.image_path_var)
         ttk.Button(frame, text="Browse…", command=self._browse_image).grid(
-            row=0, column=2, padx=(6, 0)
+            row=0, column=2, padx=(8, 0)
         )
         self.output_entry = self._entry_row(frame, 1, "Output STL", self.output_path_var)
         ttk.Button(frame, text="Browse…", command=self._browse_output).grid(
-            row=1, column=2, padx=(6, 0)
+            row=1, column=2, padx=(8, 0)
         )
         return row + 1
 
     def _scale_row(self, frame, row, label, variable, label_var, to=1.0):
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
-        scale = ttk.Scale(frame, from_=0.0, to=to, variable=variable)
-        scale.grid(row=row, column=1, sticky="ew", pady=2)
-        ttk.Label(frame, textvariable=label_var, width=5, anchor="e").grid(
-            row=row, column=2, padx=(6, 0)
+        ttk.Label(frame, text=label, style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=4
         )
+        scale = ttk.Scale(
+            frame,
+            from_=0.0,
+            to=to,
+            variable=variable,
+            style="Card.Horizontal.TScale",
+        )
+        scale.grid(row=row, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            frame, textvariable=label_var, width=5, anchor="e", style="Card.TLabel"
+        ).grid(row=row, column=2, padx=(6, 0))
         return scale
 
     def _build_levels_group(self, parent, row):
@@ -418,82 +576,107 @@ class LithomakerApp(ttk.Frame):
             frame, 2, "Gamma", self.gamma_var, self.gamma_label_var, to=3.0
         )
         ttk.Checkbutton(
-            frame, text="Auto levels (ignore black/white/gamma)", variable=self.auto_levels_var
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            frame,
+            text="Auto levels (ignore black/white/gamma)",
+            variable=self.auto_levels_var,
+            style="Card.TCheckbutton",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
         return row + 1
 
     def _spin_row(self, frame, row, label, variable, from_, to):
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Label(frame, text=label, style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=3
+        )
         spin = ttk.Spinbox(frame, from_=from_, to=to, textvariable=variable, width=14)
-        spin.grid(row=row, column=1, sticky="ew", pady=2)
+        spin.grid(row=row, column=1, sticky="ew", pady=3)
         return spin
 
     def _build_geometry_group(self, parent, row):
         frame = self._group(parent, "Geometry (mm)", row)
         frame.columnconfigure(2, weight=1)
-        self.min_layers_spin = self._spin_row(frame, 0, "Min layers", self.min_layers_var, 1, 10000)
-        self.max_layers_spin = self._spin_row(frame, 1, "Max layers", self.max_layers_var, 1, 10000)
-        self.thickness_entry = self._entry_row(frame, 2, "Layer thickness", self.thickness_var)
+        self.min_layers_spin = self._spin_row(
+            frame, 0, "Min layers", self.min_layers_var, 1, 10000
+        )
+        self.max_layers_spin = self._spin_row(
+            frame, 1, "Max layers", self.max_layers_var, 1, 10000
+        )
+        self.thickness_entry = self._entry_row(
+            frame, 2, "Layer thickness", self.thickness_var
+        )
         self.size_x_entry = self._entry_row(frame, 3, "Width X", self.size_x_var)
-        self.size_y_entry = self._entry_row(frame, 4, "Height Y (blank = aspect)", self.size_y_var)
+        self.size_y_entry = self._entry_row(
+            frame, 4, "Height Y (blank = aspect)", self.size_y_var
+        )
         ttk.Checkbutton(
-            frame, text="Lock aspect ratio", variable=self.lock_aspect_var
-        ).grid(row=5, column=1, sticky="w")
+            frame,
+            text="Lock aspect ratio",
+            variable=self.lock_aspect_var,
+            style="Card.TCheckbutton",
+        ).grid(row=5, column=1, sticky="w", pady=(2, 0))
         self.dot_size_entry = self._entry_row(frame, 6, "Dot size", self.dot_size_var)
-        self.base_entry = self._entry_row(frame, 7, "Base thickness", self.base_thickness_var)
+        self.base_entry = self._entry_row(
+            frame, 7, "Base thickness", self.base_thickness_var
+        )
         return row + 1
 
     def _build_format_group(self, parent, row):
         frame = self._group(parent, "STL format", row)
         ttk.Radiobutton(
-            frame, text="Binary (default)", value=False, variable=self.ascii_var
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Radiobutton(frame, text="ASCII", value=True, variable=self.ascii_var).grid(
-            row=0, column=1, sticky="w"
-        )
-        return row + 1
-
-    def _build_action_group(self, parent, row):
-        frame = ttk.Frame(parent)
-        frame.grid(row=row, column=0, sticky="ew")
-        frame.columnconfigure(0, weight=1)
-        self.generate_button = ttk.Button(
-            frame, text="Generate STL", command=self._on_generate, style="Accent.TButton"
-        )
-        self.generate_button.grid(row=0, column=0, sticky="ew")
+            frame,
+            text="Binary (default)",
+            value=False,
+            variable=self.ascii_var,
+            style="Card.TRadiobutton",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 16))
+        ttk.Radiobutton(
+            frame,
+            text="ASCII",
+            value=True,
+            variable=self.ascii_var,
+            style="Card.TRadiobutton",
+        ).grid(row=0, column=1, sticky="w")
         return row + 1
 
     def _build_results(self) -> None:
-        frame = ttk.LabelFrame(self, text="Result", padding=8)
-        frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        for index, (key, label) in enumerate(
-            (
-                ("vertices", "Vertices"),
-                ("triangles", "Triangles"),
-                ("z_range", "Z range"),
-                ("footprint", "Footprint"),
-                ("file_size", "File size"),
+        frame = ttk.Frame(self, style="Card.TFrame", padding=(16, 12))
+        frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        metrics = (
+            ("vertices", "Vertices"),
+            ("triangles", "Triangles"),
+            ("z_range", "Z range"),
+            ("footprint", "Footprint"),
+            ("file_size", "File size"),
+        )
+        for column, (key, label) in enumerate(metrics):
+            cell = ttk.Frame(frame, style="Card.TFrame")
+            cell.grid(row=0, column=column, sticky="w", padx=(0, 24))
+            ttk.Label(cell, text=label, style="Section.TLabel").grid(
+                row=0, column=0, sticky="w"
             )
-        ):
-            ttk.Label(frame, text=label).grid(row=0, column=index * 2, sticky="w", padx=(0, 4))
-            ttk.Label(frame, textvariable=self.stats_vars[key]).grid(
-                row=0, column=index * 2 + 1, sticky="w", padx=(0, 14)
+            ttk.Label(cell, textvariable=self.stats_vars[key], style="Metric.TLabel").grid(
+                row=1, column=0, sticky="w", pady=(2, 0)
             )
+        frame.columnconfigure(len(metrics), weight=1)
         self.show_button = ttk.Button(
             frame, text="Show in folder", command=self._show_in_folder, state="disabled"
         )
-        self.show_button.grid(row=0, column=10, sticky="e")
+        self.show_button.grid(row=0, column=len(metrics), rowspan=2, sticky="e")
 
     def _build_status_bar(self) -> None:
         frame = ttk.Frame(self)
-        frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         frame.columnconfigure(0, weight=1)
-        ttk.Label(frame, textvariable=self.status_var, anchor="w").grid(
-            row=0, column=0, sticky="ew"
-        )
+        ttk.Label(
+            frame, textvariable=self.status_var, anchor="w", style="Subtitle.TLabel"
+        ).grid(row=0, column=0, sticky="ew")
         self.progress = ttk.Progressbar(
-            frame, orient="horizontal", length=180, mode="determinate",
-            maximum=100.0, variable=self.progress_var,
+            frame,
+            orient="horizontal",
+            length=160,
+            mode="determinate",
+            maximum=100.0,
+            variable=self.progress_var,
+            style="Accent.Horizontal.TProgressbar",
         )
         self.progress.grid(row=0, column=1, sticky="e")
 
@@ -549,19 +732,25 @@ class LithomakerApp(ttk.Frame):
 
     # -- image and preview --------------------------------------------------
     def _browse_image(self) -> None:
-        chosen = filedialog.askopenfilename(
-            title="Open image", filetypes=IMAGE_FILE_TYPES,
-            initialfile=self.image_path_var.get() or None,
-        )
+        initial = self.image_path_var.get() or None
+        handled, chosen = _native_open_image(initial)
+        if not handled:
+            chosen = filedialog.askopenfilename(
+                title="Open image", filetypes=IMAGE_FILE_TYPES, initialfile=initial
+            )
         if chosen:
             self.load_image_file(chosen)
 
     def _browse_output(self) -> None:
-        chosen = filedialog.asksaveasfilename(
-            title="Save STL as", defaultextension=".stl",
-            filetypes=[("STL", "*.stl"), ("All files", "*.*")],
-            initialfile=self.output_path_var.get() or None,
-        )
+        initial = self.output_path_var.get() or None
+        handled, chosen = _native_save_stl(initial)
+        if not handled:
+            chosen = filedialog.asksaveasfilename(
+                title="Save STL as",
+                defaultextension=".stl",
+                filetypes=[("STL", "*.stl"), ("All files", "*.*")],
+                initialfile=initial,
+            )
         if chosen:
             self.output_path_var.set(chosen)
 
@@ -577,8 +766,9 @@ class LithomakerApp(ttk.Frame):
         self._image_size = (rgb.shape[1], rgb.shape[0])
         self._luminance = to_luminance(rgb)
         self.image_path_var.set(str(path))
-        if not self.output_path_var.get().strip():
-            self.output_path_var.set(str(Path(path).with_suffix(".stl")))
+        # Always follow the image: a stale output path silently overwrites (or fails on)
+        # the previous picture's STL when the user opens a different image.
+        self.output_path_var.set(str(Path(path).with_suffix(".stl")))
         if self.lock_aspect_var.get():
             self._apply_aspect_lock()
         self._draw_histogram()
@@ -745,13 +935,16 @@ class LithomakerApp(ttk.Frame):
     def _show_preview_placeholder(self) -> None:
         canvas = self.preview_canvas
         canvas.delete("all")
-        width = canvas.winfo_width()
-        height = canvas.winfo_height()
+        border = 2 * int(float(canvas.cget("highlightthickness")))
+        width = canvas.winfo_width() - border
+        height = canvas.winfo_height() - border
         if width <= 1:
             width = PREVIEW_WIDTH
         if height <= 1:
             height = PREVIEW_HEIGHT
         canvas.configure(scrollregion=(0, 0, width, height))
+        self.preview_hbar.state(["disabled"])
+        self.preview_vbar.state(["disabled"])
         canvas.create_text(
             width // 2,
             height // 2,
@@ -767,8 +960,9 @@ class LithomakerApp(ttk.Frame):
             return
 
         canvas = self.preview_canvas
-        viewport_w = canvas.winfo_width()
-        viewport_h = canvas.winfo_height()
+        border = 2 * int(float(canvas.cget("highlightthickness")))
+        viewport_w = canvas.winfo_width() - border
+        viewport_h = canvas.winfo_height() - border
         if viewport_w <= 1 or viewport_h <= 1:
             viewport_w, viewport_h = PREVIEW_WIDTH, PREVIEW_HEIGHT
 
@@ -777,6 +971,11 @@ class LithomakerApp(ttk.Frame):
         fit = min(viewport_w / source_w, viewport_h / source_h)
         display_w = max(1, int(round(source_w * fit * zoom)))
         display_h = max(1, int(round(source_h * fit * zoom)))
+        if zoom <= 1.0:
+            # Fit must be exact: rounding a pixel above the viewport would give the
+            # scrollbars a sliver of range and let the preview drift a few pixels.
+            display_w = min(display_w, viewport_w)
+            display_h = min(display_h, viewport_h)
         resample = (
             Image.Resampling.NEAREST if zoom > 1.0 else Image.Resampling.BILINEAR
         )
@@ -791,6 +990,14 @@ class LithomakerApp(ttk.Frame):
         canvas.delete("all")
         canvas.create_image(origin_x, origin_y, anchor="nw", image=self._preview_photo)
         canvas.configure(scrollregion=(0, 0, region_w, region_h))
+        scrollable_x = display_w > viewport_w
+        scrollable_y = display_h > viewport_h
+        self.preview_hbar.state(["!disabled"] if scrollable_x else ["disabled"])
+        self.preview_vbar.state(["!disabled"] if scrollable_y else ["disabled"])
+        if not scrollable_x:
+            canvas.xview_moveto(0.0)
+        if not scrollable_y:
+            canvas.yview_moveto(0.0)
         self._preview_display = (display_w, display_h)
         self._preview_origin = (origin_x, origin_y)
 
@@ -804,11 +1011,14 @@ class LithomakerApp(ttk.Frame):
 
         destination = config.resolved_output
         if not self.output_path_var.get().strip():
-            chosen = filedialog.asksaveasfilename(
-                title="Save STL as", defaultextension=".stl",
-                filetypes=[("STL", "*.stl"), ("All files", "*.*")],
-                initialfile=str(destination),
-            )
+            handled, chosen = _native_save_stl(str(destination))
+            if not handled:
+                chosen = filedialog.asksaveasfilename(
+                    title="Save STL as",
+                    defaultextension=".stl",
+                    filetypes=[("STL", "*.stl"), ("All files", "*.*")],
+                    initialfile=str(destination),
+                )
             if not chosen:
                 return
             destination = Path(chosen)
@@ -919,13 +1129,189 @@ class LithomakerApp(ttk.Frame):
 # Entry points
 # --------------------------------------------------------------------------
 def _configure_styles(root: tk.Misc) -> None:
+    """Apply the flat card theme (plan: modern, zero-dependency tkinter).
+
+    ``clam`` is used on every platform: the native ``vista``/``aqua`` themes ignore most
+    colour options, which is why the stock look could not be modernised on top of them.
+    """
+    colours = PALETTE
     style = ttk.Style(root)
-    for candidate in ("clam", "vista", "default"):
-        if candidate in style.theme_names():
-            style.theme_use(candidate)
-            break
-    style.configure("Heading.TLabel", font=("TkDefaultFont", 12, "bold"))
-    style.configure("Muted.TLabel", foreground="#555555")
+    theme = "clam" if "clam" in style.theme_names() else "default"
+    style.theme_use(theme)
+    base = "TkDefaultFont"
+
+    root.configure(background=colours["bg"])
+    root.option_add("*Font", f"{{{base}}} 10")
+
+    style.configure(
+        ".", background=colours["bg"], foreground=colours["text"], font=(base, 10)
+    )
+    style.configure("TFrame", background=colours["bg"])
+    style.configure(
+        "Card.TFrame",
+        background=colours["surface"],
+        relief="flat",
+        borderwidth=1,
+        bordercolor=colours["border"],
+        lightcolor=colours["surface"],
+        darkcolor=colours["surface"],
+    )
+    style.configure("TLabel", background=colours["bg"], foreground=colours["text"])
+    style.configure(
+        "Card.TLabel", background=colours["surface"], foreground=colours["text"]
+    )
+    style.configure(
+        "Title.TLabel",
+        background=colours["bg"],
+        foreground=colours["text"],
+        font=(base, 18, "bold"),
+    )
+    style.configure(
+        "Subtitle.TLabel", background=colours["bg"], foreground=colours["muted"]
+    )
+    style.configure(
+        "Heading.TLabel",
+        background=colours["surface"],
+        foreground=colours["text"],
+        font=(base, 13, "bold"),
+    )
+    style.configure(
+        "Section.TLabel",
+        background=colours["surface"],
+        foreground=colours["muted"],
+        font=(base, 8, "bold"),
+    )
+    style.configure(
+        "Muted.TLabel", background=colours["surface"], foreground=colours["muted"]
+    )
+    style.configure(
+        "Metric.TLabel",
+        background=colours["surface"],
+        foreground=colours["text"],
+        font=("TkFixedFont", 11),
+    )
+
+    style.configure(
+        "TButton",
+        padding=(12, 6),
+        relief="flat",
+        background=colours["surface"],
+        foreground=colours["text"],
+        bordercolor=colours["border"],
+        lightcolor=colours["surface"],
+        darkcolor=colours["surface"],
+        focusthickness=1,
+    )
+    style.map(
+        "TButton",
+        background=[("pressed", colours["hover"]), ("active", colours["hover"])],
+        bordercolor=[("focus", colours["accent"])],
+    )
+    style.configure(
+        "Accent.TButton",
+        background=colours["accent"],
+        foreground=colours["accent_fg"],
+        bordercolor=colours["accent"],
+        lightcolor=colours["accent"],
+        darkcolor=colours["accent"],
+        font=(base, 10, "bold"),
+        padding=(16, 7),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[
+            ("disabled", colours["accent_disabled"]),
+            ("pressed", colours["accent_hover"]),
+            ("active", colours["accent_hover"]),
+        ],
+        foreground=[("disabled", colours["accent_fg"])],
+        bordercolor=[
+            ("disabled", colours["accent_disabled"]),
+            ("pressed", colours["accent_hover"]),
+            ("active", colours["accent_hover"]),
+        ],
+    )
+
+    entry_options = {
+        "fieldbackground": colours["surface"],
+        "foreground": colours["text"],
+        "bordercolor": colours["border"],
+        "lightcolor": colours["border"],
+        "darkcolor": colours["border"],
+        "padding": 6,
+        "relief": "flat",
+    }
+    style.configure("TEntry", **entry_options)
+    style.map(
+        "TEntry",
+        bordercolor=[("focus", colours["accent"])],
+        lightcolor=[("focus", colours["accent"])],
+        darkcolor=[("focus", colours["accent"])],
+        fieldbackground=[("disabled", colours["bg"])],
+    )
+    style.configure(
+        "TSpinbox",
+        fieldbackground=colours["surface"],
+        background=colours["surface"],
+        foreground=colours["text"],
+        bordercolor=colours["border"],
+        lightcolor=colours["border"],
+        darkcolor=colours["border"],
+        arrowcolor=colours["muted"],
+        padding=4,
+        relief="flat",
+    )
+    style.map(
+        "TSpinbox",
+        bordercolor=[("focus", colours["accent"])],
+        arrowcolor=[("active", colours["text"])],
+    )
+
+    for radio_style in ("TCheckbutton", "Card.TCheckbutton", "Card.TRadiobutton"):
+        style.configure(
+            radio_style,
+            background=colours["surface"],
+            foreground=colours["text"],
+            focuscolor=colours["accent"],
+            padding=2,
+        )
+        style.map(
+            radio_style,
+            background=[("active", colours["surface"])],
+            foreground=[("disabled", colours["muted"])],
+        )
+
+    for scale_style in ("Horizontal.TScale", "Card.Horizontal.TScale"):
+        style.configure(
+            scale_style,
+            background=colours["surface"],
+            troughcolor=colours["trough"],
+            bordercolor=colours["surface"],
+            lightcolor=colours["accent"],
+            darkcolor=colours["accent"],
+            sliderlength=18,
+        )
+
+    style.configure(
+        "TScrollbar",
+        background=colours["border"],
+        troughcolor=colours["bg"],
+        bordercolor=colours["bg"],
+        arrowcolor=colours["muted"],
+        relief="flat",
+        gripcount=0,
+    )
+    style.map("TScrollbar", background=[("active", colours["muted"])])
+
+    style.configure(
+        "Accent.Horizontal.TProgressbar",
+        background=colours["accent"],
+        troughcolor=colours["trough"],
+        bordercolor=colours["bg"],
+        lightcolor=colours["accent"],
+        darkcolor=colours["accent"],
+        thickness=6,
+    )
 
 
 def main() -> None:

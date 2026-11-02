@@ -263,6 +263,103 @@ def test_histogram_points_handle_empty_counts():
 
 
 # --------------------------------------------------------------------------
+# native desktop pickers (no display needed)
+# --------------------------------------------------------------------------
+class _Completed:
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+
+def _fake_run(monkeypatch, completed):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return completed
+
+    monkeypatch.setattr(gui_module.subprocess, "run", run)
+    return calls
+
+
+def test_native_open_picker_prefers_zenity(monkeypatch):
+    monkeypatch.setattr(
+        gui_module.shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None
+    )
+    calls = _fake_run(monkeypatch, _Completed(stdout="/tmp/photo.png\n"))
+
+    handled, chosen = gui_module._native_open_image("/tmp/in.png")
+
+    assert (handled, chosen) == (True, "/tmp/photo.png")
+    assert calls[0][:2] == ["zenity", "--file-selection"]
+    assert "--filename=/tmp/in.png" in calls[0]
+    assert any("Images |" in argument for argument in calls[0])
+
+
+def test_native_open_picker_falls_back_to_kdialog(monkeypatch):
+    monkeypatch.setattr(
+        gui_module.shutil, "which", lambda name: "/usr/bin/kdialog" if name == "kdialog" else None
+    )
+    calls = _fake_run(monkeypatch, _Completed(stdout="/tmp/photo.png"))
+
+    handled, chosen = gui_module._native_open_image(None)
+
+    assert (handled, chosen) == (True, "/tmp/photo.png")
+    assert calls[0][:2] == ["kdialog", "--getopenfilename"]
+
+
+def test_native_picker_cancel_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(
+        gui_module.shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None
+    )
+    _fake_run(monkeypatch, _Completed(returncode=1))
+
+    assert gui_module._native_open_image() == (True, None)
+
+
+def test_native_picker_unavailable_falls_back_to_tk(monkeypatch):
+    monkeypatch.setattr(gui_module.shutil, "which", lambda name: None)
+
+    assert gui_module._native_open_image() == (False, None)
+    assert gui_module._native_save_stl() == (False, None)
+
+
+def test_native_picker_is_skipped_on_windows_and_macos(monkeypatch):
+    for platform in ("win32", "darwin"):
+        monkeypatch.setattr(gui_module.sys, "platform", platform)
+        assert gui_module._native_open_image() == (False, None)
+        assert gui_module._native_save_stl() == (False, None)
+
+
+def test_native_save_picker_asks_zenity_to_save(monkeypatch):
+    monkeypatch.setattr(
+        gui_module.shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None
+    )
+    calls = _fake_run(monkeypatch, _Completed(stdout="/tmp/out.stl"))
+
+    handled, chosen = gui_module._native_save_stl("/tmp/default.stl")
+
+    assert (handled, chosen) == (True, "/tmp/out.stl")
+    assert "--save" in calls[0]
+    assert "--confirm-overwrite" in calls[0]
+    assert "--filename=/tmp/default.stl" in calls[0]
+
+
+def test_native_picker_start_failure_falls_back(monkeypatch):
+    monkeypatch.setattr(
+        gui_module.shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None
+    )
+
+    def boom(command, **kwargs):
+        raise OSError("cannot execute")
+
+    monkeypatch.setattr(gui_module.subprocess, "run", boom)
+
+    assert gui_module._native_open_image() == (False, None)
+
+
+# --------------------------------------------------------------------------
 # widget tests (need a display)
 # --------------------------------------------------------------------------
 @pytest.fixture
@@ -279,13 +376,20 @@ def app():
     except tk.TclError:  # pragma: no cover - no reachable display
         pytest.skip("cannot connect to a display")
     root.withdraw()
+    gui_module._configure_styles(root)
     application = gui_module.LithomakerApp(root)
     application.pack(fill="both", expand=True)
     root.update()
     yield application
-    if application._preview_job is not None:
-        application.after_cancel(application._preview_job)
-        application._preview_job = None
+    for job in (
+        "_preview_job",
+        "_preview_resize_job",
+        "_histogram_job",
+    ):
+        handle = getattr(application, job, None)
+        if handle is not None:
+            application.after_cancel(handle)
+            setattr(application, job, None)
     root.destroy()
 
 
@@ -308,6 +412,29 @@ def make_png(tmp_path, height=10, width=20, name="photo.png") -> Path:
     return path
 
 
+def test_palette_defines_the_documented_tokens():
+    for token in ("bg", "surface", "border", "text", "muted", "accent", "canvas"):
+        value = gui_module.PALETTE[token]
+        assert value.startswith("#") and len(value) in (4, 7), token
+
+
+@requires_display
+def test_flat_card_theme_is_applied(app):
+    import tkinter.ttk as ttk
+
+    style = ttk.Style(app)
+    assert style.theme_use() == "clam"
+    assert style.lookup("Accent.TButton", "background") == gui_module.PALETTE["accent"]
+    assert style.lookup("Accent.TButton", "foreground") == gui_module.PALETTE["accent_fg"]
+    assert style.lookup("Card.TFrame", "background") == gui_module.PALETTE["surface"]
+    assert style.lookup("Title.TLabel", "font") != ""
+
+
+@requires_display
+def test_generate_button_uses_the_accent_style(app):
+    assert app.generate_button.cget("style") == "Accent.TButton"
+
+
 @requires_display
 def test_every_mapped_parameter_has_a_widget_variable(app):
     import tkinter as tk
@@ -323,12 +450,12 @@ def test_defaults_match_the_cli(app):
     assert values["black"] == pytest.approx(0.0)
     assert values["white"] == pytest.approx(1.0)
     assert values["gamma"] == pytest.approx(1.0)
-    assert values["min_layers"] == 4
-    assert values["max_layers"] == 32
+    assert values["min_layers"] == 1
+    assert values["max_layers"] == 13
     assert values["thickness"] == "0.2"
     assert values["size_x"] == "120"
     assert values["dot_size"] == "0.4"
-    assert values["base_thickness"] == "1.0"
+    assert values["base_thickness"] == "0.4"
     assert values["ascii"] is False
 
 
@@ -620,7 +747,41 @@ def test_fit_button_restores_the_whole_view(app, tmp_path):
 
 
 @requires_display
+def test_fit_view_has_no_scroll_play(app, tmp_path, monkeypatch):
+    app.preview_canvas.configure(highlightthickness=0)
+    monkeypatch.setattr(app.preview_canvas, "winfo_width", lambda: 200)
+    monkeypatch.setattr(app.preview_canvas, "winfo_height", lambda: 200)
+    app.load_image_file(make_png(tmp_path))
+    app._render_preview_canvas()
+
+    region = [float(value) for value in app.preview_canvas.cget("scrollregion").split()]
+    display_w, display_h = app._preview_display
+    assert display_w <= 200 and display_h <= 200
+    assert region[2] == pytest.approx(200)
+    assert region[3] == pytest.approx(200)
+    # The essential regression: fit must not leave a residual scroll range.
+    assert "disabled" in app.preview_hbar.state()
+    assert "disabled" in app.preview_vbar.state()
+
+
+@requires_display
+def test_fit_accounts_for_the_canvas_border(app, tmp_path, monkeypatch):
+    # highlightthickness=1 shrinks the drawable area by 2 px; the scrollregion must
+    # stop at that inner size or the preview can drift by those pixels.
+    app.preview_canvas.configure(highlightthickness=1)
+    monkeypatch.setattr(app.preview_canvas, "winfo_width", lambda: 202)
+    monkeypatch.setattr(app.preview_canvas, "winfo_height", lambda: 202)
+    app.load_image_file(make_png(tmp_path))
+    app._render_preview_canvas()
+
+    region = [float(value) for value in app.preview_canvas.cget("scrollregion").split()]
+    assert region[2] == pytest.approx(200)
+    assert region[3] == pytest.approx(200)
+
+
+@requires_display
 def test_zooming_makes_the_preview_scrollable(app, tmp_path, monkeypatch):
+    app.preview_canvas.configure(highlightthickness=0)
     monkeypatch.setattr(app.preview_canvas, "winfo_width", lambda: 200)
     monkeypatch.setattr(app.preview_canvas, "winfo_height", lambda: 200)
     app.load_image_file(make_png(tmp_path))
@@ -631,6 +792,8 @@ def test_zooming_makes_the_preview_scrollable(app, tmp_path, monkeypatch):
     region = [float(value) for value in app.preview_canvas.cget("scrollregion").split()]
     assert region[2] > 200
     assert region[3] > 200
+    assert "disabled" not in app.preview_hbar.state()
+    assert "disabled" not in app.preview_vbar.state()
 
 
 @requires_display
@@ -671,6 +834,7 @@ def test_missing_image_is_reported_in_a_dialog(app, tmp_path, monkeypatch):
 @requires_display
 def test_browse_image_uses_the_dialog_choice(app, tmp_path, monkeypatch):
     path = make_png(tmp_path)
+    monkeypatch.setattr(gui_module, "_native_open_image", lambda initial=None: (False, None))
     monkeypatch.setattr(
         gui_module.filedialog, "askopenfilename", lambda **kwargs: str(path)
     )
@@ -683,8 +847,50 @@ def test_browse_image_uses_the_dialog_choice(app, tmp_path, monkeypatch):
 @requires_display
 def test_browse_output_uses_the_dialog_choice(app, tmp_path, monkeypatch):
     chosen = tmp_path / "chosen.stl"
+    monkeypatch.setattr(gui_module, "_native_save_stl", lambda initial=None: (False, None))
     monkeypatch.setattr(
         gui_module.filedialog, "asksaveasfilename", lambda **kwargs: str(chosen)
+    )
+
+    app._browse_output()
+
+    assert app.output_path_var.get() == str(chosen)
+
+
+@requires_display
+def test_browse_image_prefers_the_native_picker(app, tmp_path, monkeypatch):
+    path = make_png(tmp_path)
+    monkeypatch.setattr(gui_module, "_native_open_image", lambda initial=None: (True, str(path)))
+    monkeypatch.setattr(
+        gui_module.filedialog, "askopenfilename",
+        lambda **kwargs: pytest.fail("Tk dialog should not be used when native works"),
+    )
+
+    app._browse_image()
+
+    assert app.image_path_var.get() == str(path)
+
+
+@requires_display
+def test_browse_image_native_cancel_leaves_the_field_alone(app, monkeypatch):
+    monkeypatch.setattr(gui_module, "_native_open_image", lambda initial=None: (True, None))
+    monkeypatch.setattr(
+        gui_module.filedialog, "askopenfilename",
+        lambda **kwargs: pytest.fail("Tk dialog should not be used after a native cancel"),
+    )
+
+    app._browse_image()
+
+    assert app.image_path_var.get() == ""
+
+
+@requires_display
+def test_browse_output_prefers_the_native_picker(app, tmp_path, monkeypatch):
+    chosen = tmp_path / "native.stl"
+    monkeypatch.setattr(gui_module, "_native_save_stl", lambda initial=None: (True, str(chosen)))
+    monkeypatch.setattr(
+        gui_module.filedialog, "asksaveasfilename",
+        lambda **kwargs: pytest.fail("Tk dialog should not be used when native works"),
     )
 
     app._browse_output()
@@ -700,6 +906,7 @@ def test_generate_without_an_output_path_asks_for_one(app, tmp_path, monkeypatch
     app.size_y_var.set("10")
     app.dot_size_var.set("2")
     chosen = tmp_path / "asked.stl"
+    monkeypatch.setattr(gui_module, "_native_save_stl", lambda initial=None: (False, None))
     monkeypatch.setattr(
         gui_module.filedialog, "asksaveasfilename", lambda **kwargs: str(chosen)
     )
@@ -715,6 +922,7 @@ def test_generate_without_an_output_path_asks_for_one(app, tmp_path, monkeypatch
 def test_generate_with_a_cancelled_save_dialog_does_nothing(app, tmp_path, monkeypatch):
     app.load_image_file(make_png(tmp_path))
     app.output_path_var.set("")
+    monkeypatch.setattr(gui_module, "_native_save_stl", lambda initial=None: (False, None))
     monkeypatch.setattr(gui_module.filedialog, "asksaveasfilename", lambda **kwargs: "")
 
     app._on_generate()
@@ -747,10 +955,21 @@ def test_preview_reports_invalid_parameters_instead_of_crashing(app, tmp_path):
 
 
 @requires_display
-def test_loading_another_image_keeps_a_chosen_output_path(app, tmp_path):
+def test_loading_another_image_updates_the_output_path(app, tmp_path):
+    app.load_image_file(make_png(tmp_path, name="first.png"))
+    assert app.output_path_var.get() == str(tmp_path / "first.stl")
+
+    app.load_image_file(make_png(tmp_path, name="second.png"))
+
+    # A stale output path would silently target the previous picture's STL.
+    assert app.output_path_var.get() == str(tmp_path / "second.stl")
+
+
+@requires_display
+def test_loading_another_image_overrides_a_manual_output_path(app, tmp_path):
     app.load_image_file(make_png(tmp_path, name="first.png"))
     app.output_path_var.set("custom.stl")
 
     app.load_image_file(make_png(tmp_path, name="second.png"))
 
-    assert app.output_path_var.get() == "custom.stl"
+    assert app.output_path_var.get() == str(tmp_path / "second.stl")

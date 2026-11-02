@@ -60,9 +60,9 @@ Options:
                                   Boolean spelling of --levels auto; ignores
                                   --black/--white/--gamma.
   --min-layers INTEGER            Minimum Z layers above the base.  [default:
-                                  4]
+                                  1]
   --max-layers INTEGER            Maximum Z layers above the base.  [default:
-                                  32]
+                                  13]
   --thickness FLOAT               Layer thickness in mm.  [default: 0.2]
   --size-x FLOAT                  Output width in mm.  [default: 120.0]
   --size-y FLOAT                  Output height in mm (defaults to aspect-
@@ -70,7 +70,7 @@ Options:
   --dot-size FLOAT                XY dot/pixel pitch in mm; smaller means more
                                   detail and more triangles.  [default: 0.4]
   --base-thickness FLOAT          Flat base plate thickness in mm.  [default:
-                                  1.0]
+                                  0.4]
   --ascii / --binary              STL flavour (default: binary).
   --format [binary|ascii]         STL flavour, long-form spelling of
                                   --ascii/--binary.

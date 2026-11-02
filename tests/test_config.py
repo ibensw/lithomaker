@@ -34,13 +34,13 @@ def make_config(**overrides) -> LithoConfig:
 # --------------------------------------------------------------------------
 def test_defaults_match_cli_spec():
     cfg = make_config()
-    assert cfg.min_layers == 4
-    assert cfg.max_layers == 32
+    assert cfg.min_layers == 1
+    assert cfg.max_layers == 13
     assert cfg.thickness == pytest.approx(0.2)
     assert cfg.size_x == pytest.approx(120.0)
     assert cfg.size_y is None
     assert cfg.dot_size == pytest.approx(0.4)
-    assert cfg.base_thickness == pytest.approx(1.0)
+    assert cfg.base_thickness == pytest.approx(0.4)
     assert cfg.ascii is False
     assert cfg.levels.is_identity
 

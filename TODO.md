@@ -20,13 +20,14 @@ These settle the plan's open questions so parallel agents stay consistent.
 | D3 | Mesh size guard | Hard guard: `(nx * ny) > 4_000_000` vertices → fail with a clear error suggesting a larger `--dot-size`. No decimation in v1. |
 | D4 | Units | Document millimetres everywhere (STL is unitless). All public functions use mm. |
 | D5 | `INPUT_IMAGE` / `OUTPUT` | **Positional** args are canonical per plan §6. `-i/--input` and `-o/--output` are accepted as aliases; supplying both positional and flag for the same value is an error. `OUTPUT` is optional and defaults to `Path(input).with_suffix(".stl")` in the CWD. |
-| D6 | `--min-layers` | The plan's input spec requires min layers but the CLI table omits it. **Add `--min-layers` (int, default 4)** for CLI/GUI parity. |
+| D6 | `--min-layers` | The plan's input spec requires min layers but the CLI table omits it. **Add `--min-layers` (int, default 1)** for CLI/GUI parity. |
 | D7 | Auto levels | Exposed as `--levels auto` **and** as the boolean flag pair `--auto-levels/--no-auto-levels`. When auto is on, `--black/--white/--gamma` are ignored with a warning. |
 | D8 | STL format | Binary STL is the default writer; `--ascii` writes ASCII STL (`--format {binary,ascii}` also accepted). |
 | D9 | Zero-area face policy | Heightmaps are flat-shaded per triangle; degenerate (zero-area) triangles at perfectly flat regions are **skipped** rather than written, so slicers don't choke. |
 | D10 | Bed orientation | `z = 0` is the base plate bottom face; lit face rises in `+Z`. Top surface `z_max = base_thickness + max_layers * thickness` (relative to base bottom). |
 | D11 | Python floor | Python ≥ 3.9. Runtime deps: `Pillow`, `numpy`, `click`. GUI uses **tkinter** (stdlib, zero extra dep). |
 | D12 | Public API | `lithomaker.core.convert(image_path, out_path, config) -> ConversionResult`; `lithomaker.core.build_mesh(image, config) -> Mesh`; `lithomaker.core.build_heightmap(image, config) -> np.ndarray`. Everything else is internal. |
+| D13 | v1 defaults | `min_layers=1`, `max_layers=13`, `base_thickness=0.4` mm (quick test prints out of the box). GUI, CLI and `LithoConfig` share these. |
 
 ---
 
@@ -299,6 +300,9 @@ radio, `--force` overwrite confirm dialog. On generate: `filedialog.asksaveasfil
 `core.convert(...)`, then a stats panel (vertices, triangles, Z range, file size) + a "show in
 folder" convenience. Errors → `messagebox.showerror` with the `ValueError` text (never a traceback).
 **Depends on:** LM-32, LM-20
+
+### [x] LM-34 · GUI visual refresh (flat card theme)
+> Done: `_configure_styles()` now forces `clam` on every platform (native `vista`/`aqua` ignore colour options), applies a light token palette (`gui.PALETTE`) and defines the previously missing `Accent.TButton` (it used to fall back to a stock button). Layout moved from `LabelFrame` group boxes to flat cards with uppercase section captions, a header with the primary Generate action, a metric strip for results and a thin accent progress bar; the preview/histogram sit on a white card with a dark canvas. Typography, spacing (4/8/12/16) and hover/focus states are centralised in the stylesheet. Tests assert the theme, accent style and palette tokens. Browse/save pickers now prefer the desktop's native dialog — `zenity` then `kdialog` on Linux, Tk's native dialog on Windows/macOS — with a Tk fallback when no helper is available, and fall back cleanly if the helper cannot start.
 
 ---
 
