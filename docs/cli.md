@@ -9,6 +9,7 @@ every GUI parameter has a CLI equivalent (plan §7), and both call
 ```
 lithomaker [OPTIONS] COMMAND [ARGS]...
 lithomaker convert [OPTIONS] [INPUT_IMAGE] [OUTPUT.STL]
+lithomaker gui
 lithomaker info
 lithomaker --version
 ```
@@ -29,6 +30,7 @@ Options:
 
 Commands:
   convert  Convert INPUT_IMAGE (or -i) to OUTPUT.STL (or -o).
+  gui      Launch the graphical interface (requires tkinter).
   info     Print versions useful in bug reports.
 ```
 
@@ -124,6 +126,14 @@ to stderr; silence it by not passing them.
 Binary STL is the default. `--ascii` selects text output, and `--format ascii` is the
 long-form spelling. Combining them inconsistently (`--ascii --format binary`) is a usage
 error.
+
+## `lithomaker gui`
+
+Opens the tkinter frontend. It exposes the same processing parameters as `convert` and
+calls the same `core.convert()`, so anything scripted with the CLI can be reproduced
+interactively. Needs a display and a working `tkinter` (Debian/Ubuntu:
+`apt install python3-tk`); `python -m lithomaker.gui` and the `lithomaker-gui` entry
+point are equivalent.
 
 ## `lithomaker info`
 

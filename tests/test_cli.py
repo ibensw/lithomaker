@@ -35,6 +35,7 @@ def test_group_help_lists_commands():
     assert result.exit_code == 0
     assert "Usage:" in result.output
     assert "convert" in result.output
+    assert "gui" in result.output
     assert "info" in result.output
 
 
@@ -372,6 +373,18 @@ def test_no_auto_levels_is_explicit_manual(image, tmp_path):
     result = run("convert", image, tmp_path / "out.stl", "--no-auto-levels", *FAST)
 
     assert result.exit_code == 0
+
+
+def test_gui_subcommand_launches_the_gui(monkeypatch):
+    import lithomaker.gui as gui_module
+
+    calls = {}
+    monkeypatch.setattr(gui_module, "main", lambda: calls.setdefault("ran", True))
+
+    result = run("gui")
+
+    assert result.exit_code == 0, result.output
+    assert calls["ran"] is True
 
 
 # --------------------------------------------------------------------------

@@ -6,9 +6,9 @@ A lithophane is a thin panel whose *thickness* encodes an image: thin areas tran
 light and look bright, thick areas block it and look dark. Lithomaker turns a picture
 into exactly that heightmap and exports a watertight, flat-bottomed STL in millimetres.
 
-> **Status: Phase C complete (config, image I/O, core pipeline, mesh/STL and CLI).**
-> The tkinter GUI (Phase D) is not yet written — see [`plan.md`](plan.md) for the design
-> and [`TODO.md`](TODO.md) for progress. Full CLI reference: [`docs/cli.md`](docs/cli.md).
+> **Status: Phase D complete (config, image I/O, core pipeline, mesh/STL, CLI and GUI).**
+> Packaging, CI and release polish (Phase E) remain — see [`plan.md`](plan.md) for the
+> design and [`TODO.md`](TODO.md) for progress. Full CLI reference: [`docs/cli.md`](docs/cli.md).
 
 ## Install (development)
 
@@ -70,6 +70,30 @@ Two behaviours are worth calling out:
   allocated, with a suggested `--dot-size` that would fit. Prefer a bigger dot size over
   a smaller one: triangles scale with `1 / dot_size²`.
 
+## GUI
+
+```bash
+lithomaker gui              # console script
+python -m lithomaker.gui    # module entry point
+lithomaker-gui              # gui-script entry point
+```
+
+The window is a thin wrapper over the same `core.convert()` the CLI uses, so every
+processing parameter has a widget (the mapping is machine-checked by the tests). The left
+panel shows the grayscale source, a 2D heightmap preview and the luminance histogram
+with the black/white points marked; the right panel holds the
+parameters grouped as Image / Levels / Geometry. The heightmap preview estimates how the
+part looks backlit: it uses total material thickness — base plate plus lithophane layer —
+with Beer–Lambert attenuation (μ = 0.35/mm), so a thicker base visibly dims the image.
+White means thick by default; the "Invert preview" toggle shows transmitted light instead
+(white = bright). Both are display-only and never change the STL. "Generate STL" runs the
+conversion on a
+worker thread, so progress, the status bar and the Result strip stay live and the window
+never freezes; failures appear as message boxes, never tracebacks.
+
+`tkinter` ships with CPython (on Debian/Ubuntu: `apt install python3-tk`). The GUI needs a
+display, but importing `lithomaker.gui` headless is safe — CI does exactly that.
+
 ## How it works
 
 1. Load and validate the image.
@@ -109,7 +133,7 @@ Both `--size-x` and `--size-y` were given and do not match the image aspect. Dro
 ## Repository layout
 
 ```
-lithomaker/       package: config, image_io, core, mesh, cli
+lithomaker/       package: config, image_io, core, mesh, cli, gui
 tests/            pytest suite; test images are generated in-memory
 tools/            developer scripts (make_sample.py regenerates examples/sample.png)
 examples/         sample.png — deterministic test pattern

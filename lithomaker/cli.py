@@ -29,7 +29,20 @@ from .config import ConfigError, LevelsConfig, LithoConfig
 from .core import convert
 from .image_io import ImageLoadError
 
-__all__ = ["cli", "main"]
+__all__ = ["PARAMETER_ALIASES", "PRESENTATION_OPTIONS", "cli", "main"]
+
+#: Canonical processing parameter → Click parameter names, for the GUI parity test
+#: (LM-40). Aliases and alternate spellings are folded onto one canonical name so
+#: ``gui.PARAMETER_MAP`` can be compared with this command's parameters.
+PARAMETER_ALIASES = {
+    "input": ("input_image", "input_flag"),
+    "output": ("output_arg", "output_flag"),
+    "auto_levels": ("levels_choice", "auto_flag"),
+    "ascii": ("ascii_flag", "format_choice"),
+}
+
+#: Options that only affect CLI presentation, so the GUI deliberately omits them.
+PRESENTATION_OPTIONS = frozenset({"verbose", "stats"})
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -288,6 +301,16 @@ def convert_command(
     click.echo(result.output_path)
     if stats:
         click.echo(_format_stats(result, ascii_mode))
+
+
+@cli.command()
+def gui() -> None:
+    """Launch the graphical interface (requires tkinter)."""
+    try:
+        from .gui import main as gui_main
+    except ImportError as exc:  # pragma: no cover - tkinter is stdlib but may be split
+        raise click.ClickException(f"tkinter is not available: {exc}") from exc
+    gui_main()
 
 
 @cli.command()

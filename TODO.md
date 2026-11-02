@@ -257,7 +257,8 @@ level is readable; add an `info` subcommand exposing library versions (`pillow`,
 
 ## 4. Phase D — GUI (milestone 3)
 
-### [ ] LM-30 · `gui.py` — application shell & layout
+### [x] LM-30 · `gui.py` — application shell & layout
+> Done: `LithomakerApp(ttk.Frame)` with plan §7 layout (left = grayscale source + heightmap preview + histogram, right = Image/Levels/Geometry/Format groups, bottom = action bar + status + progress) and no business logic — it only builds `LithoConfig` and calls `core.convert()`. Launchable via `lithomaker gui`, `python -m lithomaker.gui` and the `lithomaker-gui` gui-script; conversion runs on a `threading.Thread` feeding a `queue.Queue` drained by `after(50, …)`, with the button disabled while busy. Importing the module creates no `Tk()` root (tested in a subprocess with `DISPLAY` removed).
 **Files:** `lithomaker/gui.py`
 tkinter, plan §7 layout: left = preview canvas, right = parameters (the same widgets grouped as
 "Image / Levels / Geometry"), bottom = action bar (Generate STL, output path) + status line.
@@ -271,7 +272,8 @@ prints the config on "Generate" (stubbed conversion).
 
 **Depends on:** LM-17
 
-### [ ] LM-31 · GUI — image loading & levels preview
+### [x] LM-31 · GUI — image loading & levels preview
+> Done: `filedialog` picker filtered to the LM-10 formats; the source is rendered in grayscale (`to_luminance`) with aspect preserved, next to a 128-bin luminance histogram drawn on a `tk.Canvas` with dashed black/white markers. Black/white/gamma scales plus an "Auto levels" check button; every change debounces a preview rebuild via `after(150, …)` and updates the numeric labels.
 **Files:** `lithomaker/gui.py`
 File picker with a format filter matching LM-10; on load show the grayscale image (Pillow →
 `ImageTk.PhotoImage`, scaled to fit, aspect preserved) and a 256-bin histogram canvas.
@@ -279,14 +281,16 @@ Levels sliders (black/white/gamma) + "Auto" checkbox; live re-render on change, 
 (`after(150, ...)`) so dragging stays smooth.
 **Depends on:** LM-30, LM-11
 
-### [ ] LM-32 · GUI — 2D heightmap preview
+### [x] LM-32 · GUI — 2D heightmap preview
+> Done: `preview_config()` clones the config with a coarser `dot_size` (target ≤160 vertices on the long axis) so dragging sliders stays interactive, then `build_heightmap` renders a grayscale preview where white = thick material. A label reports the preview grid, the real resolved footprint in mm and the Z range; invalid intermediate values show "preview unavailable: …" instead of raising. The preview is a transmission estimate, not a plain thickness ramp: total material is `base + z_min + (1 - brightness) * (z_max - z_min)` (the same absolute Z the mesh uses) attenuated by Beer–Lambert with `LIGHT_ABSORPTION_PER_MM = 0.35`, so the base plate is part of the picture and raising it visibly dims the preview; the info line reports layers + base = total thickness. An **Invert preview** check button flips between white = thick and white = bright (`heightmap_image(..., invert=True)`), reusing the cached heightmap plus base thickness so toggling is instant and display-only — the STL is untouched.
 **Files:** `lithomaker/gui.py`
 Render the (downsampled) heightmap with a grayscale/heat colormap into a fixed-size preview
 (e.g. 320 px) using `build_heightmap` on a *coarse* `dot_size` so it stays interactive even for
 large images. Show resolved footprint (mm), Z range and grid size as labels.
 **Depends on:** LM-31, LM-13
 
-### [ ] LM-33 · GUI — parameters, generate & stats
+### [x] LM-33 · GUI — parameters, generate & stats
+> Done: every processing parameter has a widget (`PARAMETER_MAP` plus the CLI-flag table in the module docstring), spinboxes for min/max layers, editable X/Y with a "Lock aspect ratio" checkbox implementing D2, binary/ASCII radios, and `--force` surfaced as an overwrite confirmation dialog. "Generate STL" opens a save dialog only when the output field is blank, then calls `core.convert()` and fills the Result strip (vertices, triangles, Z range, footprint, file size) with an enabled "Show in folder" button. Errors go through `messagebox.showerror`, never a traceback. Widget tests run under a real display and skip when `DISPLAY` is unset.
 **Files:** `lithomaker/gui.py`
 All CLI parameters as widgets (**parity table in a docstring/comment mapping CLI flag → widget**,
 that mapping is what the parity test in LM-40 checks): spinboxes for min/max layers, size X/Y
