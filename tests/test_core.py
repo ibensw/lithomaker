@@ -249,7 +249,9 @@ def test_convert_result_matches_the_written_mesh(example_png, tmp_path):
 
     assert result.triangle_count == reloaded.triangle_count
     assert result.vertex_count == reloaded.vertex_count
-    assert reloaded.vertex_count == 2 * result.grid_shape[0] * result.grid_shape[1]
+    nx, ny = result.grid_shape
+    perimeter = 2 * (nx - 1) + 2 * (ny - 1)
+    assert reloaded.vertex_count == nx * ny + perimeter + 1
     assert result.file_size == output.stat().st_size
     assert result.file_size == 84 + 50 * reloaded.triangle_count
     assert reloaded.is_closed() is True

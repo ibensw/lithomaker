@@ -165,7 +165,7 @@ lithomaker convert portrait.jpg test.stl \
   --stats
 ```
 
-`--dot-size 0.6` keeps the grid coarse (68 × 68 vertices, 18,492 triangles, about 0.9 MB),
+`--dot-size 0.6` keeps the grid coarse (68 × 68 grid, 9,782 triangles, about 0.5 MB),
 so the file stays under a megabyte instead of tens of megabytes.
 
 ### 2. Full-size 150 mm portrait
@@ -182,7 +182,7 @@ lithomaker convert portrait.jpg portrait.stl \
 
 Omit `--size-y` so the height follows the image aspect ratio (a warning is printed if you
 pass both axes and they disagree by more than 1 %). Expect a large file: on a square source
-this example produces a 376 × 376 grid, 565,500 triangles and a ~28 MB binary STL.
+this example produces a 376 × 376 grid, 285,750 triangles and a ~14 MB binary STL.
 
 ### 3. CI one-liner
 

@@ -119,20 +119,40 @@ def build_grid_mesh(z_grid: np.ndarray, size_x: float, size_y: float) -> Mesh:
     xs = np.linspace(0.0, float(size_x), nx)
     ys = np.linspace(0.0, float(size_y), ny)
 
-    # Vertex layout: top surface first [0, nx*ny), then the flat bottom [nx*ny, 2*nx*ny).
-    # Index of grid node (i, j) for the top is ``i*ny + j`` (matches C-order of z).
+    # Vertex layout: top surface first [0, nx*ny), then the bottom perimeter
+    # [nx*ny, nx*ny + P), then the single bottom-centre vertex. The top grid node (i, j)
+    # is ``i*ny + j`` (matches C-order of z).
     xx, yy = np.meshgrid(xs, ys, indexing="ij")  # (nx, ny)
     top_xy = np.stack([xx, yy], axis=-1).reshape(-1, 2)
     top_vertices = np.concatenate([top_xy, z.reshape(-1, 1)], axis=1)
     base = nx * ny
-    bottom_vertices = np.concatenate([top_xy, np.zeros((base, 1))], axis=1)
-    vertices = np.concatenate([top_vertices, bottom_vertices], axis=0)
+
+    # Bottom perimeter in CCW order seen from +Z: y=0 rightwards, x=max upwards,
+    # y=max leftwards, x=0 downwards. Walls and the bottom fan share these vertices.
+    perimeter = np.concatenate(
+        [
+            np.arange(0, nx) * ny,
+            (nx - 1) * ny + np.arange(1, ny),
+            np.arange(nx - 2, -1, -1) * ny + (ny - 1),
+            np.arange(ny - 2, 0, -1),
+        ]
+    )
+    perimeter_count = int(perimeter.size)
+    bottom_lookup = np.full(base, -1, dtype=np.int64)
+    bottom_lookup[perimeter] = np.arange(perimeter_count)
+    center_index = base + perimeter_count
+
+    bottom_vertices = np.concatenate(
+        [top_xy[perimeter], np.zeros((perimeter_count, 1))], axis=1
+    )
+    center_vertex = np.array([[size_x / 2.0, size_y / 2.0, 0.0]], dtype=np.float64)
+    vertices = np.concatenate([top_vertices, bottom_vertices, center_vertex], axis=0)
 
     def top(i, j):
         return i * ny + j
 
     def bottom(i, j):
-        return base + i * ny + j
+        return base + bottom_lookup[np.asarray(i) * ny + np.asarray(j)]
 
     # -- top surface: two CCW triangles per cell (normal +Z) ----------------
     ci, cj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
@@ -146,15 +166,16 @@ def build_grid_mesh(z_grid: np.ndarray, size_x: float, size_y: float) -> Mesh:
         axis=0,
     )
 
-    # -- bottom face: same cells, reversed winding (normal -Z) --------------
-    b00, b10 = bottom(ci, cj), bottom(ci + 1, cj)
-    b01, b11 = bottom(ci, cj + 1), bottom(ci + 1, cj + 1)
-    bottom_tris = np.concatenate(
+    # -- bottom face: fan from the centre over the perimeter (normal -Z) ----
+    perimeter_indices = base + np.arange(perimeter_count)
+    following = base + (np.arange(perimeter_count) + 1) % perimeter_count
+    bottom_tris = np.stack(
         [
-            np.stack([b00, b11, b10], axis=-1).reshape(-1, 3),
-            np.stack([b00, b01, b11], axis=-1).reshape(-1, 3),
+            np.full(perimeter_count, center_index, dtype=np.int64),
+            following,
+            perimeter_indices,
         ],
-        axis=0,
+        axis=-1,
     )
 
     # -- side walls ---------------------------------------------------------

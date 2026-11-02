@@ -153,7 +153,7 @@ No I/O in this file; keep it pure data + geometry.
 **Depends on:** LM-1
 
 ### [x] LM-15 · `mesh.py` — mesh generation
-> Done: `build_grid_mesh(z_grid, size_x, size_y)` builds top surface + 4 skirts + bottom from a grid where axis 0 is X; fully vectorized, degenerate faces dropped per D9, footprint anchored at `(0,0,0)`. Tests assert exact triangle counts (60 for 4×4, 12 for 2×2, 36 when zero-height walls drop), `is_closed()`, positive volume equal to `size_x·size_y·mean_z`, bounds, winding per surface, and a 300×300 build under 5 s.
+> Done: `build_grid_mesh(z_grid, size_x, size_y)` builds top surface + 4 skirts + bottom from a grid where axis 0 is X; fully vectorized, degenerate faces dropped per D9, footprint anchored at `(0,0,0)`. The bottom face is a single fan over the perimeter plus one centre vertex instead of a 2-triangle-per-cell grid, which halves the triangle count and file size (a 376×376 grid drops from 565,500 to 285,750 triangles / 28 MB to 14 MB) while keeping the mesh watertight. Tests assert exact triangle counts (54 for 4×4, 14 for 2×2, 30 when zero-height walls drop), `is_closed()`, positive volume equal to `size_x·size_y·mean_z`, bounds, winding per surface, and a 300×300 build under 5 s.
 **Files:** `lithomaker/mesh.py`, `tests/test_mesh.py`
 Build the `nx × ny` grid per plan §4 step 6:
 - **Top surface:** heightmap-displaced grid, `2 * (nx-1) * (ny-1)` triangles, consistent CCW winding
@@ -245,7 +245,7 @@ level is readable; add an `info` subcommand exposing library versions (`pillow`,
 **Depends on:** LM-20
 
 ### [x] LM-22 · CLI docs & runnable examples
-> Done: `README.md` now carries the plan §6 parameter table plus the D5–D8 additions, the stdout/stderr contract, the mm-units note (D4) and a FAQ (inverted model, oversized STL/`mesh too large`, slicer orientation, faceting, aspect warning). `docs/cli.md` has the verbatim `--help` capture for the group and `convert`, argument/exit-code tables, three worked examples (40 mm proof print, 150 mm portrait, CI one-liner) and a troubleshooting table; the example numbers were verified against real runs (68×68 grid / 18,492 triangles / 0.9 MB and 376×376 / 565,500 / 28 MB).
+> Done: `README.md` now carries the plan §6 parameter table plus the D5–D8 additions, the stdout/stderr contract, the mm-units note (D4) and a FAQ (inverted model, oversized STL/`mesh too large`, slicer orientation, faceting, aspect warning). `docs/cli.md` has the verbatim `--help` capture for the group and `convert`, argument/exit-code tables, three worked examples (40 mm proof print, 150 mm portrait, CI one-liner) and a troubleshooting table; the example numbers were verified against real runs (68×68 grid / 9,782 triangles / 0.5 MB and 376×376 / 285,750 / 14 MB).
 **Files:** `README.md`, `docs/cli.md`
 - `README.md`: what a lithophane is, install, the plan §6 example, a parameters table identical to
   §6 (+ the D5–D8 additions), a note that STL is unitless-but-mm (**D4**), and an FAQ

@@ -17,7 +17,13 @@ NX, NY = 4, 4
 SIZE_X, SIZE_Y = 10.0, 6.0
 FLAT_Z = 2.0
 
-EXPECTED_TRIANGLES = 2 * (NX - 1) * (NY - 1) * 2 + 4 * (NX - 1) * 2
+#: Bottom perimeter vertices (walls meet these) and the number of bottom fan triangles.
+PERIMETER = 2 * (NX - 1) + 2 * (NY - 1)
+EXPECTED_TRIANGLES = (
+    2 * (NX - 1) * (NY - 1)          # top surface
+    + 4 * (NX - 1) + 4 * (NY - 1)    # four side walls
+    + PERIMETER                       # flat bottom fan
+)
 
 
 def flat_grid(value: float = FLAT_Z, shape: tuple = (NX, NY)) -> np.ndarray:
@@ -147,7 +153,8 @@ def test_build_grid_mesh_footprint_matches_request(flat_mesh):
 
 
 def test_build_grid_mesh_keeps_top_and_bottom_vertices_separate(flat_mesh):
-    assert flat_mesh.vertex_count == 2 * NX * NY
+    # Top grid + bottom perimeter + one bottom-centre vertex.
+    assert flat_mesh.vertex_count == NX * NY + PERIMETER + 1
 
 
 def test_build_grid_mesh_triangle_count_for_flat_top(flat_mesh):
@@ -157,15 +164,29 @@ def test_build_grid_mesh_triangle_count_for_flat_top(flat_mesh):
 def test_build_grid_mesh_triangle_count_for_smallest_grid():
     mesh = build_grid_mesh(np.ones((2, 2)), 4.0, 4.0)
 
-    # 2 top + 2 bottom + 4 walls, 2 triangles per wall.
-    assert mesh.triangle_count == 2 + 2 + 8
+    # 2 top triangles + a 4-triangle bottom fan + 4 walls (2 triangles each).
+    assert mesh.triangle_count == 2 + 4 + 8
+
+
+@pytest.mark.parametrize("shape", [(2, 5), (5, 2), (3, 7)])
+def test_bottom_fan_handles_small_and_non_square_grids(shape):
+    nx, ny = shape
+    perimeter = 2 * (nx - 1) + 2 * (ny - 1)
+    mesh = build_grid_mesh(flat_grid(2.0, shape), SIZE_X, SIZE_Y)
+
+    assert mesh.vertex_count == nx * ny + perimeter + 1
+    assert mesh.triangle_count == (
+        2 * (nx - 1) * (ny - 1) + 4 * (nx - 1) + 4 * (ny - 1) + perimeter
+    )
+    assert mesh.is_closed() is True
+    assert mesh.volume() == pytest.approx(SIZE_X * SIZE_Y * 2.0)
 
 
 def test_build_grid_mesh_drops_degenerate_walls_at_zero_height():
     mesh = build_grid_mesh(flat_grid(0.0), SIZE_X, SIZE_Y)
 
     # Walls have zero area when the top surface sits on the bed; only top and bottom stay.
-    assert mesh.triangle_count == 2 * (NX - 1) * (NY - 1) * 2
+    assert mesh.triangle_count == 2 * (NX - 1) * (NY - 1) + PERIMETER
     assert mesh.bounds()[1][2] == pytest.approx(0.0)
 
 
@@ -202,13 +223,12 @@ def test_top_surface_winding_faces_plus_z(flat_mesh):
 
 def test_bottom_surface_winding_faces_minus_z(flat_mesh):
     top_count = 2 * (NX - 1) * (NY - 1)
-    bottom_count = top_count
 
-    assert np.all(triangle_normals(flat_mesh)[top_count : top_count + bottom_count, 2] < 0)
+    assert np.all(triangle_normals(flat_mesh)[top_count : top_count + PERIMETER, 2] < 0)
 
 
 def test_side_walls_face_away_from_the_centre(flat_mesh):
-    top_count = 2 * (NX - 1) * (NY - 1) * 2
+    top_count = 2 * (NX - 1) * (NY - 1) + PERIMETER
     walls = flat_mesh.triangles[top_count:]
     centroids = flat_mesh.vertices[walls].mean(axis=1)
     normals = triangle_normals(flat_mesh)[top_count:]
